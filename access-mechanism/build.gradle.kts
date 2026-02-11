@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+//
+// SPDX-License-Identifier: EUPL-1.2
+
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
@@ -81,10 +85,10 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.bouncy.castle.bcprov)
     api(libs.nimbus.jose.jwt)
-    
+
     // Fat AAR: Compile against the extracted classes.jar so it gets bundled
     implementation(files(layout.buildDirectory.file("uniffi-extracted/classes.jar")))
-    
+
     implementation(libs.jna) {
         artifact {
             type = "aar"
