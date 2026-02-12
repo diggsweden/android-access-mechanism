@@ -50,9 +50,8 @@ Instantiate `OpaqueClient` with the following parameters:
 | Parameter              | Description                                                          |
 |------------------------|----------------------------------------------------------------------|
 | `serverPublicKey`      | The server's EC public key                                           |
-| `clientPrivateKey`     | Client EC private key (should be stored in secure hardware)          |
+| `clientKeyPair`        | Client KeyPair (should be stored in secure hardware)                 |
 | `pinStretchPrivateKey` | Private key for PIN stretching (should be stored in secure hardware) |
-| `clientIdentifier`     | Unique client identifier                                             |
 | `serverIdentifier`     | Server identifier                                                    |
 | `opaqueContext`        | OPAQUE protocol context                                              |
 
