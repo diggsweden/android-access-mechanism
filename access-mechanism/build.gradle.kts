@@ -28,13 +28,9 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "11"
-    }
-
     // Fat AAR configuration: Include extracted JNI libs
     sourceSets {
         getByName("main") {
@@ -49,13 +45,19 @@ android {
     }
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
 // Task to extract the Uniffi AAR
 val extractUniffi by tasks.registering(Copy::class) {
     from(zipTree("libs/opaque_ke_uniffi-release.aar"))
     into(layout.buildDirectory.dir("uniffi-extracted"))
 }
 
-// Ensure extraction happens before build starts
+// Ensure extraction happens before the build starts
 tasks.named("preBuild") {
     dependsOn(extractUniffi)
 }
