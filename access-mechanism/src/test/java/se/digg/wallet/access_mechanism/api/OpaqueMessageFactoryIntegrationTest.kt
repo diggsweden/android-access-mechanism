@@ -50,6 +50,7 @@ class OpaqueMessageFactoryIntegrationTest {
         cryptoManager = OpaqueCryptoManager(
             serverKeyPair.public as ECPublicKey,
             clientKeyPair.private as ECPrivateKey,
+            computeThumbprint(clientKeyPair.public as ECPublicKey),
             pinStretchKey
         )
 

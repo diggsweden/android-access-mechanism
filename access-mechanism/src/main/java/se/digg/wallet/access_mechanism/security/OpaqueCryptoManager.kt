@@ -29,6 +29,7 @@ import java.security.spec.ECPoint as JavaECPoint
 internal class OpaqueCryptoManager(
     private val serverPublicKey: ECPublicKey,
     private val clientPrivateKey: ECPrivateKey,
+    val clientKeyThumbprint: String,
     private val pinStretchPrivateKey: PrivateKey
 ) {
 
@@ -38,7 +39,8 @@ internal class OpaqueCryptoManager(
     fun sign(data: ByteArray): JWSObject {
 
         // create JWSObject
-        val header = JWSHeader.Builder(JWSAlgorithm.ES256).type(JOSEObjectType.JOSE).build()
+        val header = JWSHeader.Builder(JWSAlgorithm.ES256).type(JOSEObjectType.JOSE)
+            .keyID(clientKeyThumbprint).build()
         val jwsObject = JWSObject(
             header, Payload(data)
         )
