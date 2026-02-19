@@ -76,8 +76,9 @@ class OpaqueClient internal constructor(
      * @throws OpaqueException.CryptoException if the native registration call fails.
      * @throws OpaqueException.ProtocolException if request creation or serialization fails.
      */
-    fun registrationStart(pin: String): RegistrationStartResult {
+    fun registrationStart(pin: String, authorizationCode: String): RegistrationStartResult {
         validateInput(pin.isNotEmpty(), "PIN cannot be empty")
+        validateInput(authorizationCode.isNotEmpty(), "authorizationCode cannot be empty")
 
         val startResult = try {
             clientRegistrationStart(stretchPin(pin))
@@ -85,7 +86,7 @@ class OpaqueClient internal constructor(
             throw OpaqueException.CryptoException("Native registration failed", e)
         }
 
-        val pakeRequest = PakeRequest(data = startResult.registrationRequest)
+        val pakeRequest = PakeRequest(authorization = authorizationCode, data = startResult.registrationRequest)
         val request: OuterRequestJws = messageFactory.createPakeRequest(REGISTER_START, pakeRequest)
 
         return RegistrationStartResult(request.serialize(), startResult.clientRegistration)
@@ -105,7 +106,7 @@ class OpaqueClient internal constructor(
      */
     fun registrationFinish(
         pin: String,
-        authorizationCode: ByteArray,
+        authorizationCode: String,
         registrationResponse: String,
         clientRegistration: ByteArray
     ): RegistrationFinishResult {

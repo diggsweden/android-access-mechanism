@@ -10,7 +10,7 @@ import se.digg.wallet.access_mechanism.utils.Base64ByteArraySerializer
 @Serializable
 internal data class PakeRequest(
     val task: String? = null,
-    @Serializable(with = Base64ByteArraySerializer::class) val authorization: ByteArray? = null,
+    val authorization: String? = null,
     @Serializable(with = Base64ByteArraySerializer::class) val data: ByteArray,
 ) {
     override fun equals(other: Any?): Boolean {
@@ -18,7 +18,7 @@ internal data class PakeRequest(
         if (other !is PakeRequest) return false
 
         if (task != other.task) return false
-        if (!authorization.contentEquals(other.authorization)) return false
+        if (authorization != other.authorization) return false
         if (!data.contentEquals(other.data)) return false
 
         return true
@@ -26,9 +26,9 @@ internal data class PakeRequest(
 
     override fun hashCode(): Int {
         var result = task?.hashCode() ?: 0
-        result = 31 * result + (authorization?.contentHashCode() ?: 0)
+        result = 31 * result + (authorization?.hashCode() ?: 0)
         result = 31 * result + data.contentHashCode()
         return result
     }
-
 }
+
