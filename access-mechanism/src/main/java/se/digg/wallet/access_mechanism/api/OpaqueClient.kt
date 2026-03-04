@@ -86,7 +86,8 @@ class OpaqueClient internal constructor(
             throw OpaqueException.CryptoException("Native registration failed", e)
         }
 
-        val pakeRequest = PakeRequest(authorization = authorizationCode, data = startResult.registrationRequest)
+        val pakeRequest =
+            PakeRequest(authorization = authorizationCode, data = startResult.registrationRequest)
         val request: OuterRequestJws = messageFactory.createPakeRequest(REGISTER_START, pakeRequest)
 
         return RegistrationStartResult(request.serialize(), startResult.clientRegistration)
@@ -212,6 +213,93 @@ class OpaqueClient internal constructor(
             decryptedResponseData.sessionId,
             finishResult.exportKey
         )
+    }
+
+    /**
+     * Starts the pin change process.
+     *
+     * @param newPin The user's new raw PIN as a String.
+     * @param sessionKey The session key to be used for encryption. Result of [loginFinish].
+     * @param pakeSessionId The session ID to be used for encryption. Result of [loginFinish].
+     * @return A [RegistrationStartResult] containing the registration request and client registration.
+     * @throws OpaqueException.InvalidInputException if input parameters are invalid.
+     * @throws OpaqueException.CryptoException if the native registration call fails.
+     */
+    fun changePinStart(
+        newPin: String, sessionKey: ByteArray, pakeSessionId: String
+    ): RegistrationStartResult {
+        validateInput(newPin.isNotEmpty(), "PIN cannot be empty")
+        validateInput(sessionKey.isNotEmpty(), "sessionKey cannot be empty")
+        validateInput(pakeSessionId.isNotBlank(), "pakeSessionId cannot be blank")
+
+
+        val startResult = try {
+            clientRegistrationStart(stretchPin(newPin))
+        } catch (e: Exception) {
+            throw OpaqueException.CryptoException("Native registration failed", e)
+        }
+
+        val pakeRequest =
+            AppJson.encodeToString(PakeRequest(data = startResult.registrationRequest))
+
+        val request: OuterRequestJws = messageFactory.createSessionEncryptedRequest(
+            sessionKey, pakeSessionId, pakeRequest, CHANGE_PIN_START
+        )
+
+        return RegistrationStartResult(request.serialize(), startResult.clientRegistration)
+    }
+
+    /**
+     * Completes the pin change process on the client side.
+     *
+     * @param newPin The user's new raw PIN as a String.
+     * @param registrationResponse A serialized JWT containing the registration response from the server.
+     * @param clientRegistration The client registration from [changePinStart].
+     * @param sessionKey The session key to be used for encryption. Result of [loginFinish].
+     * @param pakeSessionId The session ID to be used for encryption. Result of [loginFinish].
+     * @return A [RegistrationFinishResult] containing the registration upload request to send to the server and the export key.
+     * @throws OpaqueException.InvalidInputException if input is invalid.
+     * @throws OpaqueException.CryptoException if the native registration finish fails.
+     * @throws OpaqueException.ProtocolException if response unwrapping or request creation fails.
+     */
+    fun changePinFinish(
+        newPin: String,
+        registrationResponse: String,
+        clientRegistration: ByteArray,
+        sessionKey: ByteArray,
+        pakeSessionId: String
+    ): RegistrationFinishResult {
+        validateInput(newPin.isNotEmpty(), "PIN cannot be empty")
+        validateInput(registrationResponse.isNotBlank(), "registrationResponse cannot be blank")
+        validateInput(clientRegistration.isNotEmpty(), "clientRegistration cannot be empty")
+        validateInput(sessionKey.isNotEmpty(), "sessionKey cannot be empty")
+        validateInput(pakeSessionId.isNotBlank(), "pakeSessionId cannot be blank")
+
+        val decryptedResponse = responseProcessor.unwrapResponse(registrationResponse, sessionKey)
+        val response = checkNotNull(
+            AppJson.decodeFromString<PakeResponse>(decryptedResponse.response).data
+        ) { "registrationResponse data is missing" }
+
+        val finishResult = try {
+            clientRegistrationFinish(
+                stretchPin(newPin),
+                clientRegistration,
+                response,
+                clientIdentifier.toByteArray(),
+                serverIdentifier.toByteArray()
+            )
+        } catch (e: Exception) {
+            throw OpaqueException.CryptoException("Native registration finish failed", e)
+        }
+
+        val pakeRequest =
+            AppJson.encodeToString(PakeRequest(data = finishResult.registrationUpload))
+
+        val request: OuterRequestJws = messageFactory.createSessionEncryptedRequest(
+            sessionKey, pakeSessionId, pakeRequest, CHANGE_PIN_FINISH
+        )
+
+        return RegistrationFinishResult(request.serialize(), finishResult.exportKey)
     }
 
     /**

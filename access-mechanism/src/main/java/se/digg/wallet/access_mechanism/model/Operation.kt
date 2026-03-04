@@ -11,6 +11,9 @@ internal enum class Operation(val type: String) {
     AUTHENTICATE_START("authenticate_start"),
     AUTHENTICATE_FINISH("authenticate_finish"),
 
+    CHANGE_PIN_START("change_pin_start"),
+    CHANGE_PIN_FINISH("change_pin_finish"),
+
     HSM_GENERATE_KEY("hsm_generate_key"),
     HSM_LIST_KEYS("hsm_list_keys"),
     HSM_SIGN("hsm_sign"),
