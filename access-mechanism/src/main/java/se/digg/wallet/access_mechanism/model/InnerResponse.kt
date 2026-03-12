@@ -14,5 +14,6 @@ internal data class InnerResponse(
     val data: String? = null,
     @SerialName("expires_in") @Serializable(with = DurationIso8601Serializer::class) val expiresIn: Duration? = null,
     val status: Status,
-    val version: Int
+    val version: Int,
+    @SerialName("error_message") val errorMessage: String? = null
 )

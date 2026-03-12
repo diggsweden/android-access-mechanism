@@ -11,5 +11,7 @@ import kotlinx.serialization.Serializable
 internal data class OuterResponse(
     val version: Int,
     @SerialName("session_id") val sessionId: String? = null,
-    @SerialName("inner_jwe") val innerJwe: String
+    @SerialName("inner_jwe") val innerJwe: String,
+    val status: Status,
+    @SerialName("error_message") val errorMessage: String? = null
 )
