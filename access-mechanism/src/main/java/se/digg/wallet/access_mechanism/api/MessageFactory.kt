@@ -45,8 +45,12 @@ internal class MessageFactory(
     private fun createOuterRequestJws(
         innerJwe: JWEObject, sessionId: String?
     ): OuterRequestJws {
-        val outerRequest =
-            OuterRequest(version = 1, sessionId = sessionId, innerJwe = innerJwe.serialize())
+        val outerRequest = OuterRequest(
+            version = 1,
+            sessionId = sessionId,
+            innerJwe = innerJwe.serialize(),
+            serverKid = cryptoManager.getServerKid()
+        )
 
         val serializedRequest = AppJson.encodeToString(outerRequest).toByteArray()
         val signed = cryptoManager.sign(serializedRequest)
