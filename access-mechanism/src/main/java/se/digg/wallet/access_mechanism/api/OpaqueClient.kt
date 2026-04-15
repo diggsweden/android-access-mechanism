@@ -9,8 +9,6 @@ import com.nimbusds.jose.JWSHeader
 import com.nimbusds.jose.JWSObject
 import com.nimbusds.jose.Payload
 import com.nimbusds.jose.crypto.impl.ECDSA
-import com.nimbusds.jose.jwk.Curve
-import com.nimbusds.jose.jwk.ECKey
 import com.nimbusds.jose.jwk.JWK
 import com.nimbusds.jose.util.Base64URL
 import se.digg.opaque_ke_uniffi.clientLoginFinish
@@ -26,46 +24,21 @@ import se.digg.wallet.access_mechanism.utils.CurveInfo
 import java.security.KeyPair
 import java.security.MessageDigest
 import java.security.PrivateKey
-import java.security.interfaces.ECPrivateKey
 import java.security.interfaces.ECPublicKey
 import kotlin.io.encoding.Base64
 
-internal fun computeThumbprint(publicKey: ECPublicKey): String {
-    val curve = Curve.forECParameterSpec(publicKey.params) ?: throw OpaqueException.CryptoException(
-        "Unsupported EC curve for client key"
-    )
-    return ECKey.Builder(curve, publicKey).build().computeThumbprint("SHA-256").toString()
-}
-
-class OpaqueClient internal constructor(
-    private val cryptoManager: OpaqueCryptoManager,
+class OpaqueClient(
+    serverPublicKey: ECPublicKey,
+    clientKeyPair: KeyPair,
+    pinStretchPrivateKey: PrivateKey,
     val serverIdentifier: String,
-    val opaqueContext: String,
-    private val messageFactory: MessageFactory = MessageFactory(
-        cryptoManager
-    ),
-    private val responseProcessor: ResponseProcessor = ResponseProcessor(cryptoManager)
+    val opaqueContext: String
 ) {
+    private val cryptoManager =
+        OpaqueCryptoManager(serverPublicKey, clientKeyPair, pinStretchPrivateKey)
+    private val messageFactory = MessageFactory(cryptoManager)
+    private val responseProcessor = ResponseProcessor(cryptoManager)
     val clientIdentifier: String = cryptoManager.clientKeyThumbprint
-
-    constructor(
-        serverPublicKey: ECPublicKey,
-        clientKeyPair: KeyPair,
-        pinStretchPrivateKey: PrivateKey,
-        serverIdentifier: String,
-        opaqueContext: String
-    ) : this(
-        OpaqueCryptoManager(
-            serverPublicKey,
-            clientKeyPair.private as? ECPrivateKey
-                ?: throw OpaqueException.CryptoException("Client private key must be EC"),
-            computeThumbprint(
-                clientKeyPair.public as? ECPublicKey
-                    ?: throw OpaqueException.CryptoException("Client public key must be EC")
-            ),
-            pinStretchPrivateKey
-        ), serverIdentifier, opaqueContext
-    )
 
     /**
      * Starts the pin registration process.

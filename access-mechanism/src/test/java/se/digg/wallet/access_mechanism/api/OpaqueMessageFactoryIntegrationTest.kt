@@ -48,10 +48,7 @@ class OpaqueMessageFactoryIntegrationTest {
         dummyKeyPair = keyPairGenerator.generateKeyPair()
 
         cryptoManager = OpaqueCryptoManager(
-            serverKeyPair.public as ECPublicKey,
-            clientKeyPair.private as ECPrivateKey,
-            computeThumbprint(clientKeyPair.public as ECPublicKey),
-            pinStretchKey
+            serverKeyPair.public as ECPublicKey, clientKeyPair, pinStretchKey
         )
 
         factory = MessageFactory(cryptoManager)
@@ -101,7 +98,7 @@ class OpaqueMessageFactoryIntegrationTest {
         val pakeRequest = PakeRequest(data = "someResponse".toByteArray(), task = "someTask")
         val pakeRequestJson = AppJson.encodeToString(pakeRequest)
 
-        val innerResponse = InnerResponse(pakeRequestJson, Duration.ZERO, Status.OK,  1)
+        val innerResponse = InnerResponse(pakeRequestJson, Duration.ZERO, Status.OK, 1)
         val innerSerialized = AppJson.encodeToString(innerResponse).toByteArray()
         val innerJwe = encryptBytes(innerSerialized)
 
@@ -146,7 +143,8 @@ class OpaqueMessageFactoryIntegrationTest {
         val innerSerialized = AppJson.encodeToString(innerResponse).toByteArray()
         val innerJwe = encryptBytes(innerSerialized, dummyKeyPair.public)
 
-        val outerResponse = OuterResponse(version = 1, innerJwe = innerJwe.serialize(), status = Status.OK)
+        val outerResponse =
+            OuterResponse(version = 1, innerJwe = innerJwe.serialize(), status = Status.OK)
         val outerResponseBytes = AppJson.encodeToString(outerResponse).toByteArray()
         val outerJws = createSignedJws(outerResponseBytes)
 
@@ -166,7 +164,8 @@ class OpaqueMessageFactoryIntegrationTest {
         val innerSerialized = AppJson.encodeToString(innerResponse).toByteArray()
         val innerJwe = encryptBytes(innerSerialized)
 
-        val outerResponse = OuterResponse(version = 1, innerJwe = innerJwe.serialize(), status = Status.OK)
+        val outerResponse =
+            OuterResponse(version = 1, innerJwe = innerJwe.serialize(), status = Status.OK)
         val outerResponseBytes = AppJson.encodeToString(outerResponse).toByteArray()
         val outerJws = createSignedJws(outerResponseBytes)
 

@@ -6,6 +6,8 @@ package se.digg.wallet.access_mechanism.security
 
 import com.nimbusds.jose.*
 import com.nimbusds.jose.crypto.*
+import com.nimbusds.jose.jwk.Curve
+import com.nimbusds.jose.jwk.ECKey
 import org.bouncycastle.crypto.digests.SHA256Digest
 import org.bouncycastle.crypto.generators.HKDFBytesGenerator
 import org.bouncycastle.crypto.params.HKDFParameters
@@ -16,6 +18,7 @@ import se.digg.wallet.access_mechanism.exception.OpaqueException
 import se.digg.wallet.access_mechanism.model.InnerRequest
 import java.security.AlgorithmParameters
 import java.security.KeyFactory
+import java.security.KeyPair
 import java.security.PrivateKey
 import java.security.interfaces.ECPrivateKey
 import java.security.interfaces.ECPublicKey
@@ -26,12 +29,35 @@ import javax.crypto.KeyAgreement
 import javax.crypto.spec.SecretKeySpec
 import java.security.spec.ECPoint as JavaECPoint
 
+internal fun computeThumbprint(publicKey: ECPublicKey): String {
+    val curve = Curve.forECParameterSpec(publicKey.params) ?: throw OpaqueException.CryptoException(
+        "Unsupported EC curve for client key"
+    )
+    return ECKey.Builder(curve, publicKey).build().computeThumbprint("SHA-256").toString()
+}
+
 internal class OpaqueCryptoManager(
     private val serverPublicKey: ECPublicKey,
+    private val serverPublicKeyThumbprint: String,
     private val clientPrivateKey: ECPrivateKey,
     val clientKeyThumbprint: String,
     private val pinStretchPrivateKey: PrivateKey
 ) {
+    constructor(
+        serverPublicKey: ECPublicKey, clientKeyPair: KeyPair, pinStretchPrivateKey: PrivateKey
+    ) : this(
+        serverPublicKey = serverPublicKey,
+        serverPublicKeyThumbprint = computeThumbprint(serverPublicKey),
+        clientPrivateKey = clientKeyPair.private as? ECPrivateKey
+            ?: throw OpaqueException.CryptoException("Client private key must be EC"),
+        clientKeyThumbprint = computeThumbprint(
+            clientKeyPair.public as? ECPublicKey
+                ?: throw OpaqueException.CryptoException("Client public key must be EC")
+        ),
+        pinStretchPrivateKey = pinStretchPrivateKey
+    )
+
+    fun getServerKid(): String = serverPublicKeyThumbprint
 
     /**
      * Creates a signed JWS containing the payload
