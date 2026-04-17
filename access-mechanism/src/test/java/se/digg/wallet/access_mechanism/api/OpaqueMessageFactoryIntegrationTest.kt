@@ -76,6 +76,7 @@ class OpaqueMessageFactoryIntegrationTest {
         assertEquals("sessionId", outerRequest.sessionId)
         assertEquals(1, outerRequest.version)
         assertEquals("hsm", outerRequest.context)
+        assert(outerRequest.nonce.isNotEmpty())
 
         // decrypt the inner Payload (RequestData)
         val requestDataJwe = JWEObject.parse(outerRequest.innerJwe)
