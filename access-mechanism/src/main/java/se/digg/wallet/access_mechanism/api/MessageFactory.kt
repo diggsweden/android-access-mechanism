@@ -11,6 +11,7 @@ import se.digg.wallet.access_mechanism.exception.OpaqueException
 import se.digg.wallet.access_mechanism.model.*
 import se.digg.wallet.access_mechanism.security.OpaqueCryptoManager
 import se.digg.wallet.access_mechanism.utils.AppJson
+import java.util.*
 
 internal class MessageFactory(
     private val cryptoManager: OpaqueCryptoManager
@@ -49,7 +50,8 @@ internal class MessageFactory(
             version = 1,
             sessionId = sessionId,
             innerJwe = innerJwe.serialize(),
-            serverKid = cryptoManager.getServerKid()
+            serverKid = cryptoManager.getServerKid(),
+            nonce = UUID.randomUUID().toString()
         )
 
         val serializedRequest = AppJson.encodeToString(outerRequest).toByteArray()
