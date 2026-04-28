@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Release Workflow 
+# Uses the unified release orchestrator with Maven library publisher
+name: Release Workflow
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+" # Stable: v1.0.0
+      - "v[0-9]+.[0-9]+.[0-9]+-SNAPSHOT*" # Snapshot: v1.0.0-SNAPSHOT
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false # Queue releases, don't cancel partial releases
+
+permissions:
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+
+jobs:
+  release:
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@feat/publish-gradle
+    permissions:
+      contents: write # Create GitHub releases and tags
+      packages: write # Publish to GitHub Packages (backup)
+      id-token: write # Generate OIDC token for Maven Central
+      actions: read # Needed by container job (even if skipped)
+      attestations: write # Needed by container job (even if skipped)
+      security-events: write # Needed by container job (even if skipped)
+    secrets: inherit # Use org-level MAVEN_CENTRAL credentials and GPG keys
+    with:
+      reusable-ci-ref: feat/publish-gradle
+      artifacts-config: .github/artifacts.yml
+      branch: ci/publish-to-maven-central
+      changelog-creator: git-cliff
+      release-publisher: github-cli

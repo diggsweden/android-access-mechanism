@@ -7,6 +7,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
     id("maven-publish")
+    signing
 }
 
 android {
@@ -45,6 +46,7 @@ android {
     publishing {
         singleVariant("release") {
             withSourcesJar()
+            withJavadocJar()
         }
     }
 }
@@ -66,17 +68,85 @@ tasks.named("preBuild") {
     dependsOn(extractUniffi)
 }
 
+val githubToken: String = findProperty("githubToken") as String? ?: ""
+val githubActor: String = findProperty("githubActor") as String? ?: ""
+val mavenCentralUsername: String = findProperty("mavenCentralUsername") as String? ?: ""
+val mavenCentralPassword: String = findProperty("mavenCentralPassword") as String? ?: ""
+val publishVersion: String = findProperty("VERSION_NAME") as String? ?: "0.0.1-SNAPSHOT"
+
 publishing {
     publications {
         register<MavenPublication>("release") {
             groupId = "se.digg.wallet"
             artifactId = "access-mechanism"
-            version = "0.0.2"
+            version = publishVersion
 
             afterEvaluate {
                 from(components["release"])
             }
+
+            pom {
+                name.set("Android Access Mechanism")
+                description.set("Android library for wallet access mechanism using OPAQUE key exchange.")
+                url.set("https://github.com/diggsweden/android-access-mechanism")
+
+                licenses {
+                    license {
+                        name.set("EUPL-1.2")
+                        url.set("https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12")
+                    }
+                }
+                developers {
+                    developer {
+                        id.set("ospo-bot")
+                        name.set("OSPO Bot")
+                        email.set("ospo@digg.se")
+                    }
+                }
+                scm {
+                    connection.set("scm:git:https://github.com/diggsweden/android-access-mechanism.git")
+                    developerConnection.set("scm:git:ssh://github.com/diggsweden/android-access-mechanism.git")
+                    url.set("https://github.com/diggsweden/android-access-mechanism")
+                }
+            }
         }
+    }
+
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/diggsweden/android-access-mechanism")
+            credentials {
+                username = githubActor
+                password = githubToken
+            }
+        }
+
+        maven {
+            name = "MavenCentral"
+            val isSnapshot = publishVersion.endsWith("-SNAPSHOT")
+            url = uri(
+                if (isSnapshot)
+                    "https://s01.oss.sonatype.org/content/repositories/snapshots/"
+                else
+                    "https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/"
+            )
+            credentials {
+                username = mavenCentralUsername
+                password = mavenCentralPassword
+            }
+        }
+    }
+}
+
+val signingKeyId: String = findProperty("signingKeyId") as String? ?: ""
+val signingKey: String = findProperty("signingKey") as String? ?: ""
+val signingPassword: String = findProperty("signingPassword") as String? ?: ""
+
+signing {
+    if (signingKeyId.isNotBlank() && signingKey.isNotBlank()) {
+        useInMemoryPgpKeys(signingKeyId, signingKey, signingPassword)
+        sign(publishing.publications["release"])
     }
 }
 
