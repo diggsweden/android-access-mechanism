@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Artifacts Configuration 
+# Gradle library published to Maven Central
+
+artifacts:
+  - name: android-access-mechanism
+    project-type: gradle
+    working-directory: .
+    build-type: library
+    publish-to:
+      - maven-central
+    config:
+      java-version: 21
+      gradle-tasks: build
+      gradle-version-file: gradle.properties
+      publish-tasks: publish
+      setup-android: true

@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+name: Pull Request Workflow
+
+on:
+  pull_request:
+
+permissions:
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+
+jobs:
+  pr-checks:
+    uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@2afbedbefbb457a5fc6175de232e4644cab58a69 # v2.7.3
+    secrets: inherit # Pass org-level secrets (for private dependencies if any)
+    permissions:
+      contents: read # Clone repository and read source code
+      packages: read # Access GitHub Packages for Maven dependencies
+      security-events: write # Upload SpotBugs/dependency check results to Security tab
+    with:
+      reusable-ci-ref: v2.7.3
+      project-type: gradle
+      linters.megalint: false # Deprecated - replaced by just+mise
+      linters.devbasecheck: true # Use just+mise for all linting
+      linters.commitlint: false # Deprecated - handled by just+mise
+      linters.licenselint: false # Deprecated - handled by just+mise
+
+  test:
+    needs: [pr-checks]
+    if: always() # Run tests even if linting fails (get complete feedback)
+    permissions:
+      contents: read # Access test resources and source code
+      packages: read # Fetch test dependencies from GitHub Packages
+    uses: ./.github/workflows/test.yml
