@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+name: Maven Test
+
+on: [workflow_call] # yamllint disable-line rule:truthy
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java-version: ['21']
+        os: [ubuntu-latest]
+
+    env:
+      MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always -DinstallAtEnd=true -DdeployAtEnd=true"
+
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Set up JDK
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          java-version: ${{ matrix.java-version }}
+          distribution: 'temurin' # Popular Java distribution
+          cache: 'maven' # Enables Maven caching
+
+      - name: Run tests
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          PACKAGE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: "# Run Maven tests directly (justfile not needed for simple test execution)\n# shellcheck disable=SC2086 \nmvn $MAVEN_CLI_OPTS test\n"
