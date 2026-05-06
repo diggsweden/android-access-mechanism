@@ -5,8 +5,11 @@
 package se.digg.wallet.access_mechanism.api
 
 import se.digg.wallet.access_mechanism.model.BFFRequest
+import se.digg.wallet.access_mechanism.model.StateResponse
+import java.security.interfaces.ECPublicKey
 
 interface OpaqueTransport {
+    suspend fun registerState(publicKey: ECPublicKey, overwrite: Boolean, ttl: String? = null): StateResponse
     suspend fun registerPin(request: BFFRequest): String
     suspend fun createSession(request: BFFRequest): String
     suspend fun changePin(request: BFFRequest): String

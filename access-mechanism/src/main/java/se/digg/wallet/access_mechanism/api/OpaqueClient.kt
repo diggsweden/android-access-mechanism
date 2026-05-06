@@ -33,13 +33,47 @@ class OpaqueClient(
     pinStretchPrivateKey: PrivateKey,
     val serverIdentifier: String,
     val opaqueContext: String,
-    private val transport: OpaqueTransport
+    private val transport: OpaqueTransport,
+    clientId: String? = null
 ) {
     private val cryptoManager =
         OpaqueCryptoManager(serverPublicKey, clientKeyPair, pinStretchPrivateKey)
     private val messageFactory = MessageFactory(cryptoManager)
     private val responseProcessor = ResponseProcessor(cryptoManager)
-    val clientIdentifier: String = cryptoManager.clientKeyThumbprint
+    val clientIdentifier: String = clientId ?: cryptoManager.clientKeyThumbprint
+    private var devAuthorizationCode: String? = null
+
+    companion object {
+        /**
+         * Creates an [OpaqueClient] by registering the device with the server.
+         * Fetches server public key and server identifier from the state response,
+         * so neither needs to be provided by the caller. The returned client is
+         * ready to call [registration] immediately — no authorization code handling needed.
+         */
+        suspend fun create(
+            clientKeyPair: KeyPair,
+            pinStretchPrivateKey: PrivateKey,
+            opaqueContext: String,
+            transport: OpaqueTransport,
+            overwrite: Boolean = false,
+            ttl: String? = null
+        ): OpaqueClient {
+            val state = transport.registerState(clientKeyPair.public as ECPublicKey, overwrite, ttl)
+            val serverPublicKey = requireNotNull(state.serverJwsPublicKey) { "serverJwsPublicKey missing in state response" }
+                .toECKey().toECPublicKey()
+            val client = OpaqueClient(
+                serverPublicKey = serverPublicKey,
+                clientKeyPair = clientKeyPair,
+                pinStretchPrivateKey = pinStretchPrivateKey,
+                serverIdentifier = state.opaqueServerId,
+                opaqueContext = opaqueContext,
+                transport = transport,
+                clientId = state.clientId
+            )
+            client.devAuthorizationCode = state.devAuthorizationCode
+            return client
+        }
+    }
 
     // --- Public API ---
 
@@ -47,14 +81,20 @@ class OpaqueClient(
      * Registers a PIN with the server. Orchestrates the two-phase OPAQUE registration
      * protocol internally and returns the derived export key on success.
      *
+     * Requires the client to have been created via [create], which stores the one-time
+     * authorization code issued by the server. The code is consumed on first call.
+     *
      * @param pin The user's raw PIN.
-     * @param authorizationCode A one-time code issued by the server during onboarding.
      * @return The OPAQUE export key derived from the registration.
      */
-    suspend fun registration(pin: String, authorizationCode: String): ByteArray {
-        val start = registrationStart(pin, authorizationCode)
+    suspend fun registration(pin: String): ByteArray {
+        val authCode = requireNotNull(devAuthorizationCode) {
+            "No authorization code available — client must be created via OpaqueClient.create()"
+        }
+        devAuthorizationCode = null
+        val start = registrationStart(pin, authCode)
         val startResponse = transport.registerPin(BFFRequest(clientIdentifier, start.registrationRequest))
-        val finish = registrationFinish(pin, authorizationCode, startResponse, start.clientRegistration)
+        val finish = registrationFinish(pin, authCode, startResponse, start.clientRegistration)
         transport.registerPin(BFFRequest(clientIdentifier, finish.registrationUpload))
         return finish.exportKey
     }
