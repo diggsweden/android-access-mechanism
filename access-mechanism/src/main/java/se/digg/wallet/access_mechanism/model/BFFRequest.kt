@@ -4,6 +4,9 @@
 
 package se.digg.wallet.access_mechanism.model
 
+import kotlinx.serialization.Serializable
+
+@Serializable
 data class BFFRequest(
     val clientId: String,
     val outerRequestJws: String
