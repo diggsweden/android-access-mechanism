@@ -32,15 +32,15 @@ class OpaqueClient(
     clientKeyPair: KeyPair,
     pinStretchPrivateKey: PrivateKey,
     val serverIdentifier: String,
-    val opaqueContext: String,
+    val stateId: String,
     private val transport: OpaqueTransport,
-    clientId: String? = null
+    val opaqueContext: String
 ) {
     private val cryptoManager =
         OpaqueCryptoManager(serverPublicKey, clientKeyPair, pinStretchPrivateKey)
     private val messageFactory = MessageFactory(cryptoManager)
     private val responseProcessor = ResponseProcessor(cryptoManager)
-    val clientIdentifier: String = clientId ?: cryptoManager.clientKeyThumbprint
+    private val opaqueClientId: String = cryptoManager.clientKeyThumbprint
     private var devAuthorizationCode: String? = null
 
     companion object {
@@ -53,10 +53,10 @@ class OpaqueClient(
         suspend fun create(
             clientKeyPair: KeyPair,
             pinStretchPrivateKey: PrivateKey,
-            opaqueContext: String,
             transport: OpaqueTransport,
-            overwrite: Boolean = false,
-            ttl: String? = null
+            opaqueContext: String = "RPS-ops",
+            ttl: String? = null,
+            overwrite: Boolean = false
         ): OpaqueClient {
             val state = transport.registerState(clientKeyPair.public as ECPublicKey, overwrite, ttl)
             val serverPublicKey = requireNotNull(state.serverJwsPublicKey) { "serverJwsPublicKey missing in state response" }
@@ -66,9 +66,9 @@ class OpaqueClient(
                 clientKeyPair = clientKeyPair,
                 pinStretchPrivateKey = pinStretchPrivateKey,
                 serverIdentifier = state.opaqueServerId,
-                opaqueContext = opaqueContext,
+                stateId = state.clientId,
                 transport = transport,
-                clientId = state.clientId
+                opaqueContext = opaqueContext
             )
             client.devAuthorizationCode = state.devAuthorizationCode
             return client
@@ -93,9 +93,10 @@ class OpaqueClient(
         }
         devAuthorizationCode = null
         val start = registrationStart(pin, authCode)
-        val startResponse = transport.registerPin(BFFRequest(clientIdentifier, start.registrationRequest))
+        val startResponse = transport.registerPin(BFFRequest(stateId, start.registrationRequest))
         val finish = registrationFinish(pin, authCode, startResponse, start.clientRegistration)
-        transport.registerPin(BFFRequest(clientIdentifier, finish.registrationUpload))
+        val finishResponse = transport.registerPin(BFFRequest(stateId, finish.registrationUpload))
+        responseProcessor.unwrapPakeResponse(finishResponse)
         return finish.exportKey
     }
 
@@ -109,9 +110,10 @@ class OpaqueClient(
      */
     suspend fun authenticate(pin: String, task: String = "general"): AuthenticationResult {
         val start = loginStart(pin)
-        val startResponse = transport.createSession(BFFRequest(clientIdentifier, start.loginRequest))
+        val startResponse = transport.createSession(BFFRequest(stateId, start.loginRequest))
         val finish = loginFinish(pin, startResponse, start.clientRegistration, task)
-        transport.createSession(BFFRequest(clientIdentifier, finish.loginFinishRequest))
+        val finishResponse = transport.createSession(BFFRequest(stateId, finish.loginFinishRequest))
+        responseProcessor.unwrapPakeResponse(finishResponse)
         return AuthenticationResult(finish.sessionKey, finish.pakeSessionId, finish.exportKey)
     }
 
@@ -126,9 +128,10 @@ class OpaqueClient(
      */
     suspend fun changePin(newPin: String, sessionKey: ByteArray, pakeSessionId: String): ByteArray {
         val start = changePinStart(newPin, sessionKey, pakeSessionId)
-        val startResponse = transport.changePin(BFFRequest(clientIdentifier, start.registrationRequest))
+        val startResponse = transport.changePin(BFFRequest(stateId, start.registrationRequest))
         val finish = changePinFinish(newPin, startResponse, start.clientRegistration, sessionKey, pakeSessionId)
-        transport.changePin(BFFRequest(clientIdentifier, finish.registrationUpload))
+        val finishResponse = transport.changePin(BFFRequest(stateId, finish.registrationUpload))
+        responseProcessor.unwrapResponse(finishResponse, sessionKey)
         return finish.exportKey
     }
 
@@ -147,7 +150,7 @@ class OpaqueClient(
         val request = messageFactory.createSessionEncryptedRequest(
             sessionKey, pakeSessionId, innerRequestData, HSM_GENERATE_KEY
         )
-        val response = transport.createKey(BFFRequest(clientIdentifier, request.serialize()))
+        val response = transport.createKey(BFFRequest(stateId, request.serialize()))
         return responseProcessor.unwrapResponse(response, sessionKey).response
     }
 
@@ -166,7 +169,7 @@ class OpaqueClient(
         val request = messageFactory.createSessionEncryptedRequest(
             sessionKey, pakeSessionId, innerRequestData, HSM_LIST_KEYS
         )
-        val response = transport.listKeys(BFFRequest(clientIdentifier, request.serialize()))
+        val response = transport.listKeys(BFFRequest(stateId, request.serialize()))
         val json = responseProcessor.unwrapResponse(response, sessionKey).response
         val map = AppJson.decodeFromString<Map<String, List<KeyInfo>>>(json)
         return checkNotNull(map["key_info"]) { "key_info is missing in response" }
@@ -188,7 +191,7 @@ class OpaqueClient(
         val request = messageFactory.createSessionEncryptedRequest(
             sessionKey, pakeSessionId, innerRequestData, HSM_DELETE_KEY
         )
-        transport.deleteKey(BFFRequest(clientIdentifier, request.serialize()))
+        transport.deleteKey(BFFRequest(stateId, request.serialize()))
     }
 
     /**
@@ -226,7 +229,7 @@ class OpaqueClient(
             sessionKey, pakeSessionId, innerRequestData, HSM_SIGN
         )
 
-        val response = transport.sign(BFFRequest(clientIdentifier, request.serialize()))
+        val response = transport.sign(BFFRequest(stateId, request.serialize()))
         val responseData = responseProcessor.unwrapResponse(response, sessionKey).response
         val signatureValue =
             AppJson.decodeFromString<Map<String, String>>(responseData)["signature"]
@@ -280,7 +283,7 @@ class OpaqueClient(
                 stretchPin(pin),
                 clientRegistration,
                 response,
-                clientIdentifier.toByteArray(),
+                opaqueClientId.toByteArray(),
                 serverIdentifier.toByteArray()
             )
         } catch (e: Exception) {
@@ -331,7 +334,7 @@ class OpaqueClient(
                 clientRegistration,
                 stretchPin(pin),
                 opaqueContext.toByteArray(),
-                clientIdentifier.toByteArray(),
+                opaqueClientId.toByteArray(),
                 serverIdentifier.toByteArray()
             )
         } catch (e: Exception) {
@@ -395,7 +398,7 @@ class OpaqueClient(
                 stretchPin(newPin),
                 clientRegistration,
                 response,
-                clientIdentifier.toByteArray(),
+                opaqueClientId.toByteArray(),
                 serverIdentifier.toByteArray()
             )
         } catch (e: Exception) {
