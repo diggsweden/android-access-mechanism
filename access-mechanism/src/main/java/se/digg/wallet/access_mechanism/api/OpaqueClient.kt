@@ -4,11 +4,9 @@
 
 package se.digg.wallet.access_mechanism.api
 
-import com.nimbusds.jose.JWSAlgorithm
 import com.nimbusds.jose.JWSHeader
 import com.nimbusds.jose.JWSObject
 import com.nimbusds.jose.Payload
-import com.nimbusds.jose.crypto.impl.ECDSA
 import com.nimbusds.jose.jwk.JWK
 import com.nimbusds.jose.util.Base64URL
 import se.digg.opaque_ke_uniffi.clientLoginFinish
@@ -399,24 +397,13 @@ class OpaqueClient(
             AppJson.decodeFromString<Map<String, String>>(responseData)["signature"]
                 ?: throw OpaqueException.ProtocolException("Missing signature in response")
 
-        val signature =
-            transcodeSignature(signatureValue, pendingSignature.jwsObject.header.algorithm)
-
         val signedJwsObject = JWSObject(
             pendingSignature.jwsObject.header.toBase64URL(),
             pendingSignature.jwsObject.payload.toBase64URL(),
-            signature
+            Base64URL(signatureValue)
         )
         cryptoManager.verifyHsmSignature(signedJwsObject, publicHsmKey.toECKey().toECPublicKey())
         return signedJwsObject.serialize()
-    }
-
-    private fun transcodeSignature(
-        signatureValue: String, algorithm: JWSAlgorithm
-    ): Base64URL {
-        val derSignature = Base64.decode(signatureValue)
-        val curveInfo = CurveInfo.fromAlgorithm(algorithm)
-        return Base64URL.encode(ECDSA.transcodeSignatureToConcat(derSignature, curveInfo.length))
     }
 
     /**
