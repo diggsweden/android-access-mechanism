@@ -50,7 +50,7 @@ internal class MessageFactory(
             version = 1,
             sessionId = sessionId,
             innerJwe = innerJwe.serialize(),
-            serverKid = cryptoManager.getServerKid(),
+            serverKid = cryptoManager.getServerSigningKid(),
             nonce = UUID.randomUUID().toString()
         )
 

@@ -7,7 +7,8 @@ package se.digg.wallet.access_mechanism.model
 import java.security.interfaces.ECPublicKey
 
 data class ServerParameters(
-    val serverPublicKey: ECPublicKey,
+    val serverSigningPublicKey: ECPublicKey,
+    val serverEncryptionPublicKey: ECPublicKey,
     val opaqueServerId: String,
     val stateId: String,
     val opaqueContext: String = "RPS-Ops"

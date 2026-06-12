@@ -27,16 +27,32 @@ import java.security.MessageDigest
 import java.security.PrivateKey
 import java.security.interfaces.ECPublicKey
 
+/**
+ * @param serverParameters Server parameters (signing/encryption public keys and identifiers),
+ * obtained from the device-state response during [create] and persisted for [resume].
+ * @param clientSigningKeyPair EC P-256 key pair used to sign outgoing requests. The private key may
+ * be an opaque handle to a hardware-backed key (e.g. AndroidKeyStore with PURPOSE_SIGN).
+ * @param clientEncryptionKeyPair EC P-256 key pair used to decrypt server responses (ECDH-ES). The
+ * private key may be an opaque handle to a hardware-backed key (e.g. AndroidKeyStore with
+ * PURPOSE_AGREE_KEY).
+ * @param pinStretchPrivateKey EC private key used for PIN stretching (key agreement only).
+ */
 class OpaqueClient private constructor(
     val serverParameters: ServerParameters,
-    clientKeyPair: KeyPair,
+    clientSigningKeyPair: KeyPair,
+    clientEncryptionKeyPair: KeyPair,
     pinStretchPrivateKey: PrivateKey,
     private val transport: OpaqueTransport,
     private var devAuthorizationCode: String? = null,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
-    private val cryptoManager =
-        OpaqueCryptoManager(serverParameters.serverPublicKey, clientKeyPair, pinStretchPrivateKey)
+    private val cryptoManager = OpaqueCryptoManager(
+        serverSigningPublicKey = serverParameters.serverSigningPublicKey,
+        serverEncryptionPublicKey = serverParameters.serverEncryptionPublicKey,
+        clientSigningKeyPair = clientSigningKeyPair,
+        clientEncryptionKeyPair = clientEncryptionKeyPair,
+        pinStretchPrivateKey = pinStretchPrivateKey
+    )
     private val messageFactory = MessageFactory(cryptoManager)
     private val responseProcessor = ResponseProcessor(cryptoManager)
     private val opaqueClientId: String = cryptoManager.clientKeyThumbprint
@@ -52,7 +68,8 @@ class OpaqueClient private constructor(
          * The returned client is ready to call [registration] immediately.
          */
         suspend fun create(
-            clientKeyPair: KeyPair,
+            clientSigningKeyPair: KeyPair,
+            clientEncryptionKeyPair: KeyPair,
             pinStretchPrivateKey: PrivateKey,
             transport: OpaqueTransport,
             opaqueContext: String = "RPS-Ops",
@@ -60,19 +77,29 @@ class OpaqueClient private constructor(
             overwrite: Boolean = false,
             dispatcher: CoroutineDispatcher = Dispatchers.IO
         ): OpaqueClient = withContext(dispatcher) {
-            val state = transport.registerState(clientKeyPair.public as ECPublicKey, overwrite, ttl)
-            val serverPublicKey =
-                requireNotNull(state.serverJwsPublicKey) { "serverJwsPublicKey missing in state response" }.toECKey()
-                    .toECPublicKey()
+            val state = transport.registerState(
+                signingPublicKey = clientSigningKeyPair.public as ECPublicKey,
+                encryptionPublicKey = clientEncryptionKeyPair.public as ECPublicKey,
+                overwrite = overwrite,
+                ttl = ttl
+            )
+            val serverSigningPublicKey =
+                requireNotNull(state.serverJwsPublicKey) { "serverJwsPublicKey missing in state response" }
+                    .toECKey().toECPublicKey()
+            val serverEncryptionPublicKey =
+                requireNotNull(state.serverJwePublicKey) { "serverJwePublicKey missing in state response" }
+                    .toECKey().toECPublicKey()
             val serverParameters = ServerParameters(
-                serverPublicKey = serverPublicKey,
+                serverSigningPublicKey = serverSigningPublicKey,
+                serverEncryptionPublicKey = serverEncryptionPublicKey,
                 opaqueServerId = state.opaqueServerId,
                 stateId = state.clientId,
                 opaqueContext = opaqueContext
             )
             OpaqueClient(
                 serverParameters = serverParameters,
-                clientKeyPair = clientKeyPair,
+                clientSigningKeyPair = clientSigningKeyPair,
+                clientEncryptionKeyPair = clientEncryptionKeyPair,
                 pinStretchPrivateKey = pinStretchPrivateKey,
                 transport = transport,
                 devAuthorizationCode = state.devAuthorizationCode,
@@ -84,18 +111,21 @@ class OpaqueClient private constructor(
          * Reconstructs an [OpaqueClient] from persisted state without a network call.
          * Use this on subsequent app launches after the device has already been registered via [create].
          *
-         * The caller is responsible for loading [clientKeyPair] and [pinStretchPrivateKey]
-         * from the Android Keystore using the key tags that were stored during [create].
+         * The caller is responsible for loading [clientSigningKeyPair], [clientEncryptionKeyPair]
+         * and [pinStretchPrivateKey] from the Android Keystore using the key tags that were stored
+         * during [create].
          */
         fun resume(
             transport: OpaqueTransport,
             serverParameters: ServerParameters,
-            clientKeyPair: KeyPair,
+            clientSigningKeyPair: KeyPair,
+            clientEncryptionKeyPair: KeyPair,
             pinStretchPrivateKey: PrivateKey,
             dispatcher: CoroutineDispatcher = Dispatchers.IO
         ): OpaqueClient = OpaqueClient(
             serverParameters = serverParameters,
-            clientKeyPair = clientKeyPair,
+            clientSigningKeyPair = clientSigningKeyPair,
+            clientEncryptionKeyPair = clientEncryptionKeyPair,
             pinStretchPrivateKey = pinStretchPrivateKey,
             transport = transport,
             devAuthorizationCode = null,

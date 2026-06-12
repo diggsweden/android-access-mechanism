@@ -9,6 +9,11 @@ import se.digg.wallet.access_mechanism.model.StateResponse
 import java.security.interfaces.ECPublicKey
 
 interface OpaqueTransport {
-    suspend fun registerState(publicKey: ECPublicKey, overwrite: Boolean, ttl: String? = null): StateResponse
+    suspend fun registerState(
+        signingPublicKey: ECPublicKey,
+        encryptionPublicKey: ECPublicKey,
+        overwrite: Boolean,
+        ttl: String? = null
+    ): StateResponse
     suspend fun perform(request: HSMRequest, operation: HSMOperationType): String
 }

@@ -31,8 +31,10 @@ class OpaqueMessageFactoryIntegrationTest {
     private lateinit var cryptoManager: OpaqueCryptoManager
     private lateinit var factory: MessageFactory
     private lateinit var responseProcessor: ResponseProcessor
-    private lateinit var clientKeyPair: KeyPair
-    private lateinit var serverKeyPair: KeyPair
+    private lateinit var clientSigningKeyPair: KeyPair
+    private lateinit var clientEncryptionKeyPair: KeyPair
+    private lateinit var serverSigningKeyPair: KeyPair
+    private lateinit var serverEncryptionKeyPair: KeyPair
     private lateinit var dummyKeyPair: KeyPair
 
 
@@ -41,14 +43,20 @@ class OpaqueMessageFactoryIntegrationTest {
         val keyPairGenerator = KeyPairGenerator.getInstance("EC")
         keyPairGenerator.initialize(ECGenParameterSpec("secp256r1"))
 
-        clientKeyPair = keyPairGenerator.generateKeyPair()
-        serverKeyPair = keyPairGenerator.generateKeyPair()
+        clientSigningKeyPair = keyPairGenerator.generateKeyPair()
+        clientEncryptionKeyPair = keyPairGenerator.generateKeyPair()
+        serverSigningKeyPair = keyPairGenerator.generateKeyPair()
+        serverEncryptionKeyPair = keyPairGenerator.generateKeyPair()
         val pinStretchKey = keyPairGenerator.generateKeyPair().private
 
         dummyKeyPair = keyPairGenerator.generateKeyPair()
 
         cryptoManager = OpaqueCryptoManager(
-            serverKeyPair.public as ECPublicKey, clientKeyPair, pinStretchKey
+            serverSigningPublicKey = serverSigningKeyPair.public as ECPublicKey,
+            serverEncryptionPublicKey = serverEncryptionKeyPair.public as ECPublicKey,
+            clientSigningKeyPair = clientSigningKeyPair,
+            clientEncryptionKeyPair = clientEncryptionKeyPair,
+            pinStretchPrivateKey = pinStretchKey
         )
 
         factory = MessageFactory(cryptoManager)
@@ -66,8 +74,8 @@ class OpaqueMessageFactoryIntegrationTest {
             factory.createPakeRequest(AUTHENTICATE_START, pakeRequest, "sessionId")
 
         // assert
-        // verify Signature using Client's Public Key
-        val verifier = ECDSAVerifier(clientKeyPair.public as ECPublicKey)
+        // verify Signature using Client's signing Public Key
+        val verifier = ECDSAVerifier(clientSigningKeyPair.public as ECPublicKey)
         assertTrue("Signature verification failed", outerRequestJws.unwrap().verify(verifier))
 
         // inspect the outerRequest
@@ -80,7 +88,7 @@ class OpaqueMessageFactoryIntegrationTest {
 
         // decrypt the inner Payload (RequestData)
         val requestDataJwe = JWEObject.parse(outerRequest.innerJwe)
-        val decrypter = ECDHDecrypter(serverKeyPair.private as ECPrivateKey)
+        val decrypter = ECDHDecrypter(serverEncryptionKeyPair.private as ECPrivateKey)
         requestDataJwe.decrypt(decrypter)
         val innerRequest = AppJson.decodeFromString<InnerRequest>(requestDataJwe.payload.toString())
 
@@ -159,6 +167,27 @@ class OpaqueMessageFactoryIntegrationTest {
     }
 
     @Test
+    fun `unwrapping fails if response is encrypted to the signing key instead of the encryption key`() {
+        // arrange
+        val innerResponse = InnerResponse(data = "someData", status = Status.OK, version = 1)
+        val innerSerialized = AppJson.encodeToString(innerResponse).toByteArray()
+        val innerJwe = encryptBytes(innerSerialized, clientSigningKeyPair.public)
+
+        val outerResponse =
+            OuterResponse(version = 1, innerJwe = innerJwe.serialize(), status = Status.OK)
+        val outerResponseBytes = AppJson.encodeToString(outerResponse).toByteArray()
+        val outerJws = createSignedJws(outerResponseBytes)
+
+        val serverResponse = outerJws.serialize()
+
+        // act && assert
+        val exception = assertThrows(OpaqueException.ProtocolException::class.java) {
+            responseProcessor.unwrapPakeResponse(serverResponse)
+        }
+        assertEquals("Failed to decrypt response", exception.message)
+    }
+
+    @Test
     fun `a server response with an error status is rejected`() {
         // arrange
         val innerResponse = InnerResponse(data = null, status = Status.ERROR, version = 1)
@@ -179,7 +208,9 @@ class OpaqueMessageFactoryIntegrationTest {
         assertEquals("Server response status not OK: ERROR", exception.message)
     }
 
-    fun encryptBytes(payload: ByteArray, publicKey: PublicKey = clientKeyPair.public): JWEObject {
+    fun encryptBytes(
+        payload: ByteArray, publicKey: PublicKey = clientEncryptionKeyPair.public
+    ): JWEObject {
         val jweHeader = JWEHeader.Builder(JWEAlgorithm.ECDH_ES, EncryptionMethod.A256GCM).build()
         val jweObject = JWEObject(jweHeader, Payload(payload))
         val encrypter = ECDHEncrypter(publicKey as ECPublicKey)
@@ -188,7 +219,7 @@ class OpaqueMessageFactoryIntegrationTest {
     }
 
     fun createSignedJws(
-        payload: ByteArray, privateKey: PrivateKey = serverKeyPair.private
+        payload: ByteArray, privateKey: PrivateKey = serverSigningKeyPair.private
     ): JWSObject {
         val jwsHeader = JWSHeader.Builder(JWSAlgorithm.ES256).type(JOSEObjectType.JOSE).build()
         val jwsObject = JWSObject(jwsHeader, Payload(payload))
