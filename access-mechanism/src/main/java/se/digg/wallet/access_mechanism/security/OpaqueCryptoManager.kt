@@ -36,27 +36,40 @@ internal fun computeThumbprint(publicKey: ECPublicKey): String {
 }
 
 internal class OpaqueCryptoManager(
-    private val serverPublicKey: ECPublicKey,
-    private val serverPublicKeyThumbprint: String,
-    private val clientPrivateKey: PrivateKey,
+    private val serverSigningPublicKey: ECPublicKey,
+    private val serverEncryptionPublicKey: ECPublicKey,
+    private val serverSigningKeyThumbprint: String,
+    private val clientSigningPrivateKey: PrivateKey,
+    private val clientEncryptionPrivateKey: PrivateKey,
     val clientKeyThumbprint: String,
     private val pinStretchPrivateKey: PrivateKey
 ) {
     constructor(
-        serverPublicKey: ECPublicKey, clientKeyPair: KeyPair, pinStretchPrivateKey: PrivateKey
+        serverSigningPublicKey: ECPublicKey,
+        serverEncryptionPublicKey: ECPublicKey,
+        clientSigningKeyPair: KeyPair,
+        clientEncryptionKeyPair: KeyPair,
+        pinStretchPrivateKey: PrivateKey
     ) : this(
-        serverPublicKey = serverPublicKey,
-        serverPublicKeyThumbprint = computeThumbprint(serverPublicKey),
-        clientPrivateKey = clientKeyPair.private.takeIf { it.algorithm == "EC" }
-            ?: throw OpaqueException.CryptoException("Client private key must be EC"),
+        serverSigningPublicKey = serverSigningPublicKey,
+        serverEncryptionPublicKey = serverEncryptionPublicKey,
+        serverSigningKeyThumbprint = computeThumbprint(serverSigningPublicKey),
+        clientSigningPrivateKey = clientSigningKeyPair.private.takeIf { it.algorithm == "EC" }
+            ?: throw OpaqueException.CryptoException("Client signing private key must be EC"),
+        clientEncryptionPrivateKey = clientEncryptionKeyPair.private.takeIf { it.algorithm == "EC" }
+            ?: throw OpaqueException.CryptoException("Client encryption private key must be EC"),
         clientKeyThumbprint = computeThumbprint(
-            clientKeyPair.public as? ECPublicKey
-                ?: throw OpaqueException.CryptoException("Client public key must be EC")
+            clientSigningKeyPair.public as? ECPublicKey
+                ?: throw OpaqueException.CryptoException("Client signing public key must be EC")
         ),
         pinStretchPrivateKey = pinStretchPrivateKey
-    )
+    ) {
+        if (clientEncryptionKeyPair.public !is ECPublicKey) {
+            throw OpaqueException.CryptoException("Client encryption public key must be EC")
+        }
+    }
 
-    fun getServerKid(): String = serverPublicKeyThumbprint
+    fun getServerSigningKid(): String = serverSigningKeyThumbprint
 
     /**
      * Creates a signed JWS containing the payload
@@ -70,14 +83,14 @@ internal class OpaqueCryptoManager(
             header, Payload(data)
         )
 
-        // sign JWS
-        val signer = ECDSASigner(clientPrivateKey, Curve.P_256)
+        // sign JWS; the PrivateKey + Curve constructor supports opaque keys (e.g., AndroidKeyStore)
+        val signer = ECDSASigner(clientSigningPrivateKey, Curve.P_256)
         jwsObject.sign(signer)
         return jwsObject
     }
 
     /**
-     * Encrypts an InnerRequest to a JWE. This is used for opaque requests where the servers' public key is used for encryption.
+     * Encrypts an InnerRequest to a JWE. This is used for opaque requests where the server's encryption public key is used for encryption.
      */
     fun encryptWithPublicKey(innerRequest: InnerRequest): JWEObject {
         val header =
@@ -85,7 +98,7 @@ internal class OpaqueCryptoManager(
                 .build()
 
         val jweObject = JWEObject(header, Payload(innerRequest.toByteArray()))
-        val encrypter = ECDHEncrypter(serverPublicKey)
+        val encrypter = ECDHEncrypter(serverEncryptionPublicKey)
         jweObject.encrypt(encrypter)
         return jweObject
     }
@@ -106,7 +119,7 @@ internal class OpaqueCryptoManager(
      * Verifies the signature of a JWSObject using the server's public key
      */
     fun verifySignature(jwsObject: JWSObject) {
-        val jwsVerifier = ECDSAVerifier(serverPublicKey)
+        val jwsVerifier = ECDSAVerifier(serverSigningPublicKey)
         if (!jwsObject.verify(jwsVerifier)) {
             throw OpaqueException.CryptoException("Invalid signature")
         }
@@ -120,10 +133,11 @@ internal class OpaqueCryptoManager(
     }
 
     /**
-     * Decrypts a JWE using the client's private key
+     * Decrypts a JWE using the client's decryption (key agreement) private key
      */
     fun decrypt(payloadJwe: JWEObject): JWEObject {
-        val decrypter = ECDHDecrypter(clientPrivateKey, null, Curve.P_256)
+        // the PrivateKey + Curve constructor supports opaque keys (e.g., AndroidKeyStore)
+        val decrypter = ECDHDecrypter(clientEncryptionPrivateKey, null, Curve.P_256)
         payloadJwe.decrypt(decrypter)
         return payloadJwe
     }

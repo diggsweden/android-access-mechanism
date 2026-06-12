@@ -66,9 +66,11 @@ Instantiate `OpaqueClient` with the following parameters:
 
 | Parameter              | Description                                                          |
 |------------------------|----------------------------------------------------------------------|
-| `serverPublicKey`      | The server's EC public key                                           |
-| `clientKeyPair`        | Client KeyPair (should be stored in secure hardware)                 |
-| `pinStretchPrivateKey` | Private key for PIN stretching (should be stored in secure hardware) |
+| `serverSigningPublicKey`    | The server's EC public key, used to verify server signatures                                          |
+| `serverEncryptionPublicKey` | The server's EC public key, used to encrypt requests to the server                                    |
+| `clientSigningKeyPair`      | Client EC P-256 key pair for signing requests (hardware-backed supported, `PURPOSE_SIGN`)             |
+| `clientEncryptionKeyPair`   | Client EC P-256 key pair for decrypting responses (hardware-backed supported, `PURPOSE_AGREE_KEY`)    |
+| `pinStretchPrivateKey`      | Private key for PIN stretching (should be stored in secure hardware)                                  |
 | `serverIdentifier`     | Server identifier                                                    |
 | `opaqueContext`        | OPAQUE protocol context                                              |
 
