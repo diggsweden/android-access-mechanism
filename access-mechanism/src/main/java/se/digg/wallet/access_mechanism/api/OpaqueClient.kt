@@ -11,6 +11,9 @@ import com.nimbusds.jose.Payload
 import com.nimbusds.jose.crypto.impl.ECDSA
 import com.nimbusds.jose.jwk.JWK
 import com.nimbusds.jose.util.Base64URL
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import se.digg.opaque_ke_uniffi.clientLoginFinish
 import se.digg.opaque_ke_uniffi.clientLoginStart
 import se.digg.opaque_ke_uniffi.clientRegistrationFinish
@@ -27,29 +30,267 @@ import java.security.PrivateKey
 import java.security.interfaces.ECPublicKey
 import kotlin.io.encoding.Base64
 
-class OpaqueClient(
-    serverPublicKey: ECPublicKey,
+class OpaqueClient private constructor(
+    val serverParameters: ServerParameters,
     clientKeyPair: KeyPair,
     pinStretchPrivateKey: PrivateKey,
-    val serverIdentifier: String,
-    val opaqueContext: String
+    private val transport: OpaqueTransport,
+    private var devAuthorizationCode: String? = null,
+    private val dispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
     private val cryptoManager =
-        OpaqueCryptoManager(serverPublicKey, clientKeyPair, pinStretchPrivateKey)
+        OpaqueCryptoManager(serverParameters.serverPublicKey, clientKeyPair, pinStretchPrivateKey)
     private val messageFactory = MessageFactory(cryptoManager)
     private val responseProcessor = ResponseProcessor(cryptoManager)
-    val clientIdentifier: String = cryptoManager.clientKeyThumbprint
+    private val opaqueClientId: String = cryptoManager.clientKeyThumbprint
+    private val serverIdentifier: String = serverParameters.opaqueServerId
+    val clientId: String = serverParameters.stateId
+    private val opaqueContext: String = serverParameters.opaqueContext
+    private var session: OpaqueSession? = null
+
+    companion object {
+        /**
+         * Creates an [OpaqueClient] by registering the device with the server.
+         * Fetches server parameters from the state response automatically.
+         * The returned client is ready to call [registration] immediately.
+         */
+        suspend fun create(
+            clientKeyPair: KeyPair,
+            pinStretchPrivateKey: PrivateKey,
+            transport: OpaqueTransport,
+            opaqueContext: String = "RPS-Ops",
+            ttl: String? = null,
+            overwrite: Boolean = false,
+            dispatcher: CoroutineDispatcher = Dispatchers.IO
+        ): OpaqueClient = withContext(dispatcher) {
+            val state = transport.registerState(clientKeyPair.public as ECPublicKey, overwrite, ttl)
+            val serverPublicKey =
+                requireNotNull(state.serverJwsPublicKey) { "serverJwsPublicKey missing in state response" }
+                    .toECKey().toECPublicKey()
+            val serverParameters = ServerParameters(
+                serverPublicKey = serverPublicKey,
+                opaqueServerId = state.opaqueServerId,
+                stateId = state.clientId,
+                opaqueContext = opaqueContext
+            )
+            OpaqueClient(
+                serverParameters = serverParameters,
+                clientKeyPair = clientKeyPair,
+                pinStretchPrivateKey = pinStretchPrivateKey,
+                transport = transport,
+                devAuthorizationCode = state.devAuthorizationCode,
+                dispatcher = dispatcher
+            )
+        }
+
+        /**
+         * Reconstructs an [OpaqueClient] from persisted state without a network call.
+         * Use this on subsequent app launches after the device has already been registered via [create].
+         *
+         * The caller is responsible for loading [clientKeyPair] and [pinStretchPrivateKey]
+         * from the Android Keystore using the key tags that were stored during [create].
+         */
+        fun resume(
+            transport: OpaqueTransport,
+            serverParameters: ServerParameters,
+            clientKeyPair: KeyPair,
+            pinStretchPrivateKey: PrivateKey,
+            dispatcher: CoroutineDispatcher = Dispatchers.IO
+        ): OpaqueClient = OpaqueClient(
+            serverParameters = serverParameters,
+            clientKeyPair = clientKeyPair,
+            pinStretchPrivateKey = pinStretchPrivateKey,
+            transport = transport,
+            devAuthorizationCode = null,
+            dispatcher = dispatcher
+        )
+    }
 
     /**
-     * Starts the pin registration process.
+     * Registers a PIN with the server. Orchestrates the two-phase OPAQUE registration
+     * protocol internally and returns the derived export key on success.
      *
-     * @param pin The user's raw PIN as a String.
-     * @return A [RegistrationStartResult] containing the registration request and client registration.
-     * @throws OpaqueException.InvalidInputException if the PIN is empty.
-     * @throws OpaqueException.CryptoException if the native registration call fails.
-     * @throws OpaqueException.ProtocolException if request creation or serialization fails.
+     * Requires the client to have been created via [create], which stores the one-time
+     * authorization code issued by the server. The code is consumed on first call.
+     *
+     * @param pin The user's raw PIN.
+     * @return The OPAQUE export key derived from the registration.
      */
-    fun registrationStart(pin: String, authorizationCode: String): RegistrationStartResult {
+    suspend fun registration(pin: String, stateJws: String? = null): ByteArray = withContext(dispatcher) {
+        val authCode = requireNotNull(devAuthorizationCode) {
+            "No authorization code available — client must be created via OpaqueClient.create()"
+        }
+        devAuthorizationCode = null
+        val start = registrationStart(pin, authCode)
+        val startResponse = transport.perform(HSMRequest(clientId, start.registrationRequest, stateJws), HSMOperationType.REGISTER_PIN)
+        val finish = registrationFinish(pin, authCode, startResponse, start.clientRegistration)
+        val finishResponse = transport.perform(HSMRequest(clientId, finish.registrationUpload, stateJws), HSMOperationType.REGISTER_PIN)
+        responseProcessor.unwrapPakeResponse(finishResponse)
+        finish.exportKey
+    }
+
+    /**
+     * Authenticates with the server using the registered PIN. Orchestrates the two-phase
+     * OPAQUE login protocol internally and stores the resulting session for subsequent operations.
+     *
+     * @param pin The user's raw PIN.
+     * @param task Optional task label for the session. Defaults to "general".
+     * @return The OPAQUE export key derived from authentication.
+     */
+    suspend fun authenticate(pin: String, task: String = "general", stateJws: String? = null): ByteArray = withContext(dispatcher) {
+        val start = loginStart(pin)
+        val startResponse = transport.perform(HSMRequest(clientId, start.loginRequest, stateJws), HSMOperationType.CREATE_SESSION)
+        val finish = loginFinish(pin, startResponse, start.clientRegistration, task)
+        val finishResponse = transport.perform(HSMRequest(clientId, finish.loginFinishRequest, stateJws), HSMOperationType.CREATE_SESSION)
+        responseProcessor.unwrapPakeResponse(finishResponse)
+        session = OpaqueSession(finish.sessionKey, finish.pakeSessionId)
+        finish.exportKey
+    }
+
+    /**
+     * Changes the registered PIN. Requires an active session from [authenticate].
+     * Orchestrates the two-phase OPAQUE re-registration protocol internally.
+     *
+     * @param newPin The user's new raw PIN.
+     * @return The OPAQUE export key derived from the new PIN registration.
+     */
+    suspend fun changePin(newPin: String, stateJws: String? = null): ByteArray = withContext(dispatcher) {
+        val (sessionKey, pakeSessionId) = requireSession()
+        val start = changePinStart(newPin, sessionKey, pakeSessionId)
+        val startResponse = transport.perform(HSMRequest(clientId, start.registrationRequest, stateJws), HSMOperationType.CHANGE_PIN)
+        val finish = changePinFinish(newPin, startResponse, start.clientRegistration, sessionKey, pakeSessionId)
+        val finishResponse = transport.perform(HSMRequest(clientId, finish.registrationUpload, stateJws), HSMOperationType.CHANGE_PIN)
+        responseProcessor.unwrapResponse(finishResponse, sessionKey)
+        finish.exportKey
+    }
+
+    /**
+     * Generates a new P-256 HSM key on the server.
+     *
+     * @return The decrypted JSON response from the server containing the key details.
+     */
+    suspend fun createHsmKey(stateJws: String? = null): String = withContext(dispatcher) {
+        val (sessionKey, pakeSessionId) = requireSession()
+        val innerRequestData = AppJson.encodeToString(mapOf("curve" to "P-256"))
+        val request = messageFactory.createSessionEncryptedRequest(
+            sessionKey, pakeSessionId, innerRequestData, HSM_GENERATE_KEY
+        )
+        val response = transport.perform(HSMRequest(clientId, request.serialize(), stateJws), HSMOperationType.CREATE_KEY)
+        responseProcessor.unwrapResponse(response, sessionKey).response
+    }
+
+    /**
+     * Lists all HSM keys available on the server for this client.
+     *
+     * @return A list of [KeyInfo] describing available HSM keys.
+     */
+    suspend fun listHsmKeys(stateJws: String? = null): List<KeyInfo> = withContext(dispatcher) {
+        val (sessionKey, pakeSessionId) = requireSession()
+        val innerRequestData = AppJson.encodeToString(mapOf("curves" to listOf<String>()))
+        val request = messageFactory.createSessionEncryptedRequest(
+            sessionKey, pakeSessionId, innerRequestData, HSM_LIST_KEYS
+        )
+        val response = transport.perform(HSMRequest(clientId, request.serialize(), stateJws), HSMOperationType.LIST_KEYS)
+        val json = responseProcessor.unwrapResponse(response, sessionKey).response
+        val map = AppJson.decodeFromString<Map<String, List<KeyInfo>>>(json)
+        checkNotNull(map["key_info"]) { "key_info is missing in response" }
+    }
+
+    /**
+     * Deletes an HSM key from the server.
+     *
+     * @param kid The key ID of the HSM key to delete.
+     */
+    suspend fun deleteHsmKey(kid: String, stateJws: String? = null) {
+        withContext(dispatcher) {
+            val (sessionKey, pakeSessionId) = requireSession()
+            validateInput(kid.isNotBlank(), "kid cannot be blank")
+            val innerRequestData = AppJson.encodeToString(mapOf("hsm_kid" to kid))
+            val request = messageFactory.createSessionEncryptedRequest(
+                sessionKey, pakeSessionId, innerRequestData, HSM_DELETE_KEY
+            )
+            transport.perform(HSMRequest(clientId, request.serialize(), stateJws), HSMOperationType.DELETE_KEY)
+        }
+    }
+
+    /**
+     * Signs [data] using the specified HSM key. SHA-256 is computed internally;
+     * callers pass raw bytes.
+     *
+     * @param kid The key ID of the HSM key to sign with.
+     * @param data The raw bytes to sign.
+     * @return A [SignatureResponse] containing the P1363-encoded signature.
+     */
+    suspend fun sign(kid: String, data: ByteArray, stateJws: String? = null): SignatureResponse = withContext(dispatcher) {
+        val (sessionKey, pakeSessionId) = requireSession()
+        validateInput(kid.isNotBlank(), "kid cannot be blank")
+
+        val digest = MessageDigest.getInstance("SHA-256").digest(data)
+        val innerRequestData = AppJson.encodeToString(SignRequestPayload(kid, digest))
+        val request = messageFactory.createSessionEncryptedRequest(
+            sessionKey, pakeSessionId, innerRequestData, HSM_SIGN
+        )
+
+        val response = transport.perform(HSMRequest(clientId, request.serialize(), stateJws), HSMOperationType.SIGN)
+        val responseData = responseProcessor.unwrapResponse(response, sessionKey).response
+        val signatureValue = AppJson.decodeFromString<Map<String, String>>(responseData)["signature"]
+            ?: throw OpaqueException.ProtocolException("Missing signature in response")
+        SignatureResponse(signatureValue)
+    }
+
+    /**
+     * Signs [payload] using the specified HSM key and verifies the returned signature
+     * against [publicHsmKey].
+     *
+     * @param kid The key ID of the HSM key to sign with.
+     * @param payload The payload to sign.
+     * @param curve The signing curve. Defaults to P-256.
+     * @param publicHsmKey The HSM key's public key, used to verify the returned signature.
+     * @return A compact serialized JWS containing the verified signature.
+     */
+    suspend fun signJws(
+        kid: String,
+        payload: String,
+        curve: String = "P-256",
+        publicHsmKey: JWK,
+        stateJws: String? = null
+    ): String = withContext(dispatcher) {
+        val (sessionKey, pakeSessionId) = requireSession()
+        validateInput(kid.isNotBlank(), "kid cannot be blank")
+        validateInput(payload.isNotBlank(), "payload cannot be blank")
+
+        val curveInfo = CurveInfo.fromName(curve)
+        val jwsObject = JWSObject(
+            JWSHeader.Builder(curveInfo.jwsAlgorithm).keyID(kid).build(), Payload(payload)
+        )
+        val tbsHash = MessageDigest.getInstance(curveInfo.digestAlgorithm).digest(jwsObject.signingInput)
+        val innerRequestData = AppJson.encodeToString(SignRequestPayload(kid, tbsHash))
+        val request = messageFactory.createSessionEncryptedRequest(
+            sessionKey, pakeSessionId, innerRequestData, HSM_SIGN
+        )
+
+        val response = transport.perform(HSMRequest(clientId, request.serialize(), stateJws), HSMOperationType.SIGN)
+        val responseData = responseProcessor.unwrapResponse(response, sessionKey).response
+        val signatureValue =
+            AppJson.decodeFromString<Map<String, String>>(responseData)["signature"]
+                ?: throw OpaqueException.ProtocolException("Missing signature in response")
+
+        val signature = transcodeSignature(signatureValue, jwsObject.header.algorithm)
+        val signedJwsObject = JWSObject(
+            jwsObject.header.toBase64URL(),
+            jwsObject.payload.toBase64URL(),
+            signature
+        )
+        cryptoManager.verifyHsmSignature(signedJwsObject, publicHsmKey.toECKey().toECPublicKey())
+        signedJwsObject.serialize()
+    }
+
+    // --- Private protocol implementation ---
+
+    private fun requireSession(): OpaqueSession =
+        checkNotNull(session) { "No active session — call authenticate() first" }
+
+    private fun registrationStart(pin: String, authorizationCode: String): RegistrationStartResult {
         validateInput(pin.isNotEmpty(), "PIN cannot be empty")
         validateInput(authorizationCode.isNotEmpty(), "authorizationCode cannot be empty")
 
@@ -62,23 +303,10 @@ class OpaqueClient(
         val pakeRequest =
             PakeRequest(authorization = authorizationCode, data = startResult.registrationRequest)
         val request: OuterRequestJws = messageFactory.createPakeRequest(REGISTER_START, pakeRequest)
-
         return RegistrationStartResult(request.serialize(), startResult.clientRegistration)
     }
 
-    /**
-     * Completes the pin registration process on the client side.
-     *
-     * @param pin The user's raw PIN as a String.
-     * @param authorizationCode A code created on the server and passed to the client during onboarding.
-     * @param registrationResponse A serialized JWT containing the registration response from the server.
-     * @param clientRegistration The client registration from [registrationStart].
-     * @return A [RegistrationFinishResult] containing the registration upload request to send to the server and the export key.
-     * @throws OpaqueException.InvalidInputException if input is invalid.
-     * @throws OpaqueException.CryptoException if the native registration finish fails.
-     * @throws OpaqueException.ProtocolException if response unwrapping or request creation fails.
-     */
-    fun registrationFinish(
+    private fun registrationFinish(
         pin: String,
         authorizationCode: String,
         registrationResponse: String,
@@ -98,7 +326,7 @@ class OpaqueClient(
                 stretchPin(pin),
                 clientRegistration,
                 response,
-                clientIdentifier.toByteArray(),
+                opaqueClientId.toByteArray(),
                 serverIdentifier.toByteArray()
             )
         } catch (e: Exception) {
@@ -109,20 +337,10 @@ class OpaqueClient(
             PakeRequest(authorization = authorizationCode, data = finishResult.registrationUpload)
         val request: OuterRequestJws =
             messageFactory.createPakeRequest(REGISTER_FINISH, pakeRequest, null)
-
         return RegistrationFinishResult(request.serialize(), finishResult.exportKey)
     }
 
-    /**
-     * Starts the login process.
-     *
-     * @param pin The user's raw PIN as a String
-     * @return A [LoginStartResult] containing the login request and client registration.
-     * @throws OpaqueException.InvalidInputException if the PIN is empty.
-     * @throws OpaqueException.CryptoException if the native login start fails.
-     * @throws OpaqueException.ProtocolException if request creation fails.
-     */
-    fun loginStart(pin: String): LoginStartResult {
+    private fun loginStart(pin: String): LoginStartResult {
         validateInput(pin.isNotEmpty(), "PIN cannot be empty")
 
         val startResult = try {
@@ -132,26 +350,16 @@ class OpaqueClient(
         }
 
         val pakeRequest = PakeRequest(data = startResult.credentialRequest)
-        val request: OuterRequestJws = messageFactory.createPakeRequest(
-            AUTHENTICATE_START, pakeRequest
-        )
+        val request: OuterRequestJws =
+            messageFactory.createPakeRequest(AUTHENTICATE_START, pakeRequest)
         return LoginStartResult(request.serialize(), startResult.clientRegistration)
     }
 
-    /**
-     * Completes the login process on the client side.
-     *
-     * @param pin The user's raw PIN as a String.
-     * @param loginResponse A serialized JWT containing the login response from the server.
-     * @param clientRegistration The client registration from [loginStart].
-     * @param task Optional task for the session. Default is "general".
-     * @return A [LoginFinishResult] containing the login finish request to send to the server and the derived session key.
-     * @throws OpaqueException.InvalidInputException if input is invalid.
-     * @throws OpaqueException.CryptoException if the native login finish fails.
-     * @throws OpaqueException.ProtocolException if response unwrapping or request creation fails.
-     */
-    fun loginFinish(
-        pin: String, loginResponse: String, clientRegistration: ByteArray, task: String = "general"
+    private fun loginFinish(
+        pin: String,
+        loginResponse: String,
+        clientRegistration: ByteArray,
+        task: String
     ): LoginFinishResult {
         validateInput(pin.isNotEmpty(), "PIN cannot be empty")
         validateInput(loginResponse.isNotBlank(), "loginResponse cannot be blank")
@@ -160,7 +368,8 @@ class OpaqueClient(
         val decryptedResponseData = responseProcessor.unwrapPakeResponse(loginResponse)
         val credentialResponse =
             checkNotNull(decryptedResponseData.response) { "credentialResponse is missing" }
-        val sessionId = checkNotNull(decryptedResponseData.sessionId) { "sessionId is missing" }
+        val sessionId =
+            checkNotNull(decryptedResponseData.sessionId) { "sessionId is missing" }
 
         val finishResult = try {
             clientLoginFinish(
@@ -168,7 +377,7 @@ class OpaqueClient(
                 clientRegistration,
                 stretchPin(pin),
                 opaqueContext.toByteArray(),
-                clientIdentifier.toByteArray(),
+                opaqueClientId.toByteArray(),
                 serverIdentifier.toByteArray()
             )
         } catch (e: Exception) {
@@ -176,10 +385,8 @@ class OpaqueClient(
         }
 
         val pakeRequest = PakeRequest(task = task, data = finishResult.credentialFinalization)
-        val request: OuterRequestJws = messageFactory.createPakeRequest(
-            AUTHENTICATE_FINISH, pakeRequest, sessionId
-        )
-
+        val request: OuterRequestJws =
+            messageFactory.createPakeRequest(AUTHENTICATE_FINISH, pakeRequest, sessionId)
         return LoginFinishResult(
             request.serialize(),
             finishResult.sessionKey,
@@ -188,23 +395,12 @@ class OpaqueClient(
         )
     }
 
-    /**
-     * Starts the pin change process.
-     *
-     * @param newPin The user's new raw PIN as a String.
-     * @param sessionKey The session key to be used for encryption. Result of [loginFinish].
-     * @param pakeSessionId The session ID to be used for encryption. Result of [loginFinish].
-     * @return A [RegistrationStartResult] containing the registration request and client registration.
-     * @throws OpaqueException.InvalidInputException if input parameters are invalid.
-     * @throws OpaqueException.CryptoException if the native registration call fails.
-     */
-    fun changePinStart(
-        newPin: String, sessionKey: ByteArray, pakeSessionId: String
+    private fun changePinStart(
+        newPin: String,
+        sessionKey: ByteArray,
+        pakeSessionId: String
     ): RegistrationStartResult {
         validateInput(newPin.isNotEmpty(), "PIN cannot be empty")
-        validateInput(sessionKey.isNotEmpty(), "sessionKey cannot be empty")
-        validateInput(pakeSessionId.isNotBlank(), "pakeSessionId cannot be blank")
-
 
         val startResult = try {
             clientRegistrationStart(stretchPin(newPin))
@@ -214,28 +410,13 @@ class OpaqueClient(
 
         val pakeRequest =
             AppJson.encodeToString(PakeRequest(data = startResult.registrationRequest))
-
         val request: OuterRequestJws = messageFactory.createSessionEncryptedRequest(
             sessionKey, pakeSessionId, pakeRequest, CHANGE_PIN_START
         )
-
         return RegistrationStartResult(request.serialize(), startResult.clientRegistration)
     }
 
-    /**
-     * Completes the pin change process on the client side.
-     *
-     * @param newPin The user's new raw PIN as a String.
-     * @param registrationResponse A serialized JWT containing the registration response from the server.
-     * @param clientRegistration The client registration from [changePinStart].
-     * @param sessionKey The session key to be used for encryption. Result of [loginFinish].
-     * @param pakeSessionId The session ID to be used for encryption. Result of [loginFinish].
-     * @return A [RegistrationFinishResult] containing the registration upload request to send to the server and the export key.
-     * @throws OpaqueException.InvalidInputException if input is invalid.
-     * @throws OpaqueException.CryptoException if the native registration finish fails.
-     * @throws OpaqueException.ProtocolException if response unwrapping or request creation fails.
-     */
-    fun changePinFinish(
+    private fun changePinFinish(
         newPin: String,
         registrationResponse: String,
         clientRegistration: ByteArray,
@@ -245,8 +426,6 @@ class OpaqueClient(
         validateInput(newPin.isNotEmpty(), "PIN cannot be empty")
         validateInput(registrationResponse.isNotBlank(), "registrationResponse cannot be blank")
         validateInput(clientRegistration.isNotEmpty(), "clientRegistration cannot be empty")
-        validateInput(sessionKey.isNotEmpty(), "sessionKey cannot be empty")
-        validateInput(pakeSessionId.isNotBlank(), "pakeSessionId cannot be blank")
 
         val decryptedResponse = responseProcessor.unwrapResponse(registrationResponse, sessionKey)
         val response = checkNotNull(
@@ -258,7 +437,7 @@ class OpaqueClient(
                 stretchPin(newPin),
                 clientRegistration,
                 response,
-                clientIdentifier.toByteArray(),
+                opaqueClientId.toByteArray(),
                 serverIdentifier.toByteArray()
             )
         } catch (e: Exception) {
@@ -267,209 +446,22 @@ class OpaqueClient(
 
         val pakeRequest =
             AppJson.encodeToString(PakeRequest(data = finishResult.registrationUpload))
-
         val request: OuterRequestJws = messageFactory.createSessionEncryptedRequest(
             sessionKey, pakeSessionId, pakeRequest, CHANGE_PIN_FINISH
         )
-
         return RegistrationFinishResult(request.serialize(), finishResult.exportKey)
     }
 
-    /**
-     * Creates a request for creating a new HSM key using P-256.
-     *
-     * @param sessionKey The session key to be used for encryption. SessionKey is the result of [loginFinish].
-     * @param pakeSessionId The session ID to be used for encryption. This is the result of [loginFinish].
-     * @return A serialized JWT containing the request to create a new HSM key.
-     * @throws OpaqueException.InvalidInputException if input parameters are invalid.
-     */
-    fun createHsmKey(sessionKey: ByteArray, pakeSessionId: String): String {
-        validateInput(sessionKey.isNotEmpty(), "sessionKey cannot be empty")
-        validateInput(pakeSessionId.isNotBlank(), "pakeSessionId cannot be blank")
-
-        val innerRequestData = AppJson.encodeToString(mapOf("curve" to "P-256"))
-
-
-        return messageFactory.createSessionEncryptedRequest(
-            sessionKey, pakeSessionId, innerRequestData, HSM_GENERATE_KEY
-        ).serialize()
-    }
-
-    /**
-     * Creates a request to list available HSM keys.
-     *
-     * @param sessionKey The session key to be used for encryption. SessionKey is the result of [loginFinish].
-     * @param pakeSessionId The session ID to be used for encryption. This is the result of [loginFinish].
-     * @return A serialized JWT containing the request to list HSM keys.
-     * @throws OpaqueException.InvalidInputException if input parameters are invalid.
-     */
-    fun listHsmKeys(sessionKey: ByteArray, pakeSessionId: String): String {
-        validateInput(sessionKey.isNotEmpty(), "sessionKey cannot be empty")
-        validateInput(pakeSessionId.isNotBlank(), "pakeSessionId cannot be blank")
-        val innerRequestData = AppJson.encodeToString(mapOf("curves" to listOf<String>()))
-
-        return messageFactory.createSessionEncryptedRequest(
-            sessionKey, pakeSessionId, innerRequestData, HSM_LIST_KEYS
-        ).serialize()
-    }
-
-    /**
-     * Creates a request to delete a specific HSM key.
-     *
-     * @param sessionKey The session key to be used for encryption. SessionKey is the result of [loginFinish].
-     * @param pakeSessionId The session ID to be used for encryption. This is the result of [loginFinish].
-     * @param kid The kid of the HSM key to be deleted.
-     * @return A serialized JWT containing the request to list HSM keys.
-     * @throws OpaqueException.InvalidInputException if input parameters are invalid.
-     */
-    fun deleteHsmKey(sessionKey: ByteArray, pakeSessionId: String, kid: String): String {
-        validateInput(sessionKey.isNotEmpty(), "sessionKey cannot be empty")
-        validateInput(pakeSessionId.isNotBlank(), "pakeSessionId cannot be blank")
-        validateInput(kid.isNotBlank(), "kid cannot be blank")
-        val innerRequestData = AppJson.encodeToString(mapOf("hsm_kid" to kid))
-        return messageFactory.createSessionEncryptedRequest(
-            sessionKey, pakeSessionId, innerRequestData, HSM_DELETE_KEY
-        ).serialize()
-    }
-
-    /**
-     * Creates a request to sign a payload with a specific HSM key.
-     * The returned pendingSignature, together with the response from the server, can be used as input
-     * to [decryptSign] to get the complete signed payload.
-     *
-     * @param sessionKey The session key to be used for encryption. SessionKey is the result of [loginFinish].
-     * @param pakeSessionId The session ID to be used for encryption. This is the result of [loginFinish].
-     * @param kid The kid of the HSM key to be used for signing.
-     * @param payload The payload to be signed.
-     * @param curve The curve to be used for signing. The default is P-256.
-     * @return A [PendingSignature] containing the server request to sign the payload and local state for decrypting the response.
-     * @throws OpaqueException.InvalidInputException if input parameters are invalid.
-     */
-    fun signWithHsm(
-        sessionKey: ByteArray,
-        pakeSessionId: String,
-        kid: String,
-        payload: String,
-        curve: String = "P-256",
-    ): PendingSignature {
-        validateInput(sessionKey.isNotEmpty(), "sessionKey cannot be empty")
-        validateInput(pakeSessionId.isNotBlank(), "pakeSessionId cannot be blank")
-        validateInput(kid.isNotBlank(), "kid cannot be blank")
-        validateInput(payload.isNotBlank(), "payload cannot be blank")
-
-        val curveInfo = CurveInfo.fromName(curve)
-
-        val jwsObject = JWSObject(
-            JWSHeader.Builder(curveInfo.jwsAlgorithm).keyID(kid).build(), Payload(payload)
-        )
-
-        // create a hash of signingInput (header+payload) to be signed by HSM
-        val md = MessageDigest.getInstance(curveInfo.digestAlgorithm)
-        val tbsHash = md.digest(jwsObject.signingInput)
-
-        val innerRequestData = AppJson.encodeToString(SignRequestPayload(kid, tbsHash))
-
-        val request: OuterRequestJws = messageFactory.createSessionEncryptedRequest(
-            sessionKey, pakeSessionId, innerRequestData, HSM_SIGN
-        )
-        return PendingSignature(request.serialize(), jwsObject)
-    }
-
-    /**
-     * Decrypts a server response and creates a complete signed and verified JWS.
-     *
-     * @param sessionKey The session key to be used for decryption. SessionKey is the result of [loginFinish].
-     * @param pendingSignature The signRequest returned by [signWithHsm].
-     * @param serverResponse The server response to be decrypted.
-     * @return A complete signed JWS.
-     * @throws OpaqueException.CryptoException if the signature verification fails.
-     * @throws OpaqueException.InvalidInputException if input parameters are invalid.
-     */
-    fun decryptSign(
-        sessionKey: ByteArray,
-        pendingSignature: PendingSignature,
-        serverResponse: String,
-        publicHsmKey: JWK
-    ): String {
-        validateInput(sessionKey.isNotEmpty(), "sessionKey cannot be empty")
-        validateInput(serverResponse.isNotBlank(), "serverResponse cannot be blank")
-
-        val responseData = responseProcessor.unwrapResponse(serverResponse, sessionKey).response
-        val signatureValue =
-            AppJson.decodeFromString<Map<String, String>>(responseData)["signature"]
-                ?: throw OpaqueException.ProtocolException("Missing signature in response")
-
-        val signature =
-            transcodeSignature(signatureValue, pendingSignature.jwsObject.header.algorithm)
-
-        val signedJwsObject = JWSObject(
-            pendingSignature.jwsObject.header.toBase64URL(),
-            pendingSignature.jwsObject.payload.toBase64URL(),
-            signature
-        )
-        cryptoManager.verifyHsmSignature(signedJwsObject, publicHsmKey.toECKey().toECPublicKey())
-        return signedJwsObject.serialize()
-    }
-
-    private fun transcodeSignature(
-        signatureValue: String, algorithm: JWSAlgorithm
-    ): Base64URL {
+    private fun transcodeSignature(signatureValue: String, algorithm: JWSAlgorithm): Base64URL {
         val derSignature = Base64.decode(signatureValue)
         val curveInfo = CurveInfo.fromAlgorithm(algorithm)
         return Base64URL.encode(ECDSA.transcodeSignatureToConcat(derSignature, curveInfo.length))
-    }
-
-    /**
-     * Decrypts a message from the server using the clients private key.
-     *
-     * @param response A serialized JWT from the server.
-     * @return The message from the servers' payload.
-     * @throws OpaqueException.ProtocolException if the message cannot be decrypted or parsed.
-     * @throws OpaqueException.InvalidInputException if the response is blank.
-     */
-    fun decryptStatus(response: String): String {
-        validateInput(response.isNotBlank(), "response cannot be blank")
-        return responseProcessor.unwrapPakeResponse(response).status.toString()
-    }
-
-    /**
-     * Decrypts the payload from the server using the session key.
-     *
-     * @param response A serialized JWT from the server.
-     * @param sessionKey The session key to be used for decryption.
-     * @return The decrypted payload from the servers response as JSON.
-     * @throws OpaqueException.ProtocolException if the payload cannot be decrypted or parsed.
-     * @throws OpaqueException.InvalidInputException if input parameters are invalid.
-     */
-    fun decryptPayload(response: String, sessionKey: ByteArray): String {
-        validateInput(response.isNotBlank(), "response cannot be blank")
-        validateInput(sessionKey.isNotEmpty(), "sessionKey cannot be empty")
-        return responseProcessor.unwrapResponse(response, sessionKey).response
-    }
-
-    /**
-     * Decrypts and deserializes the payload from the server using the session key.
-     * This is used to get the response from [listHsmKeys]
-     *
-     * @param response A serialized JWT from the server.
-     * @param sessionKey The session key to be used for decryption.
-     * @return A list of [KeyInfo].
-     * @throws OpaqueException.ProtocolException if the payload cannot be decrypted, parsed, or deserialized.
-     * @throws OpaqueException.InvalidInputException if input parameters are invalid.
-     */
-    fun decryptKeys(response: String, sessionKey: ByteArray): List<KeyInfo> {
-        return decryptPayload(response, sessionKey).let {
-            val map = AppJson.decodeFromString<Map<String, List<KeyInfo>>>(it)
-            checkNotNull(map["key_info"]) { "key_info is missing in response" }
-        }
     }
 
     private fun stretchPin(pin: String): ByteArray =
         cryptoManager.stretchPin(pin.toByteArray(Charsets.UTF_8))
 
     private fun validateInput(condition: Boolean, message: String) {
-        if (!condition) {
-            throw OpaqueException.InvalidInputException(message)
-        }
+        if (!condition) throw OpaqueException.InvalidInputException(message)
     }
 }
