@@ -99,6 +99,23 @@ dependencies {
         }
     }
     testImplementation(libs.junit)
+    // Run the UniFFI OPAQUE bindings on the host JVM (no emulator) in unit tests.
+    // The release AAR only ships Android .so files, so the desktop-native slice is
+    // supplied separately here, mirroring the macOS slice in the iOS XCFramework.
+    // The desktop JNA jar provides the host jnidispatch (the project's main JNA is
+    // the Android aar variant, which only carries device binaries).
+    //
+    // The jar is host-architecture-specific and is not committed (build it with
+    // `make desktop` in the opaque_ke_uniffi repo; see README). It carries only
+    // native .so resources — no .class files — so omitting it still compiles the
+    // tests; the integration tests then Assume-skip at runtime. Only put it on the
+    // classpath when present, otherwise Gradle's artifact transform hard-fails on
+    // the missing file during configuration.
+    val desktopJar = file("libs/opaque_ke_uniffi-desktop.jar")
+    if (desktopJar.exists()) {
+        testImplementation(files(desktopJar))
+        testImplementation("net.java.dev.jna:jna:${libs.versions.jna.get()}")
+    }
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 }
