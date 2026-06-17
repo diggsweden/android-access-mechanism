@@ -21,7 +21,7 @@ internal class MessageFactory(
         type: Operation, request: PakeRequest, pakeSessionId: String? = null
     ): OuterRequestJws = try {
         val pakeSessionData = AppJson.encodeToString(request)
-        val innerRequest = InnerRequest(type.type, 0, pakeSessionData)
+        val innerRequest = InnerRequest(type.type, pakeSessionData)
 
         val innerJwe: JWEObject = cryptoManager.encryptWithPublicKey(innerRequest)
         createOuterRequestJws(innerJwe, pakeSessionId)
@@ -34,7 +34,7 @@ internal class MessageFactory(
     fun createSessionEncryptedRequest(
         sessionKey: ByteArray, pakeSessionId: String, request: String, type: Operation
     ): OuterRequestJws = try {
-        val innerRequest = InnerRequest(type.type, 0, request)
+        val innerRequest = InnerRequest(type.type, request)
         val innerJwe: JWEObject = cryptoManager.encryptWithSessionKey(innerRequest, sessionKey)
         createOuterRequestJws(innerJwe, pakeSessionId)
     } catch (e: JOSEException) {
