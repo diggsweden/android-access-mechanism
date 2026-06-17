@@ -19,7 +19,7 @@ import java.time.Instant
 class SerializersTest {
 
     @Test
-    fun testKeyInfoDeserialization() {
+    fun `key info json deserializes its timestamp and ec public key`() {
         val jsonInput = """
             {
               "created_at": "2026-01-27T08:36:37.551226731+00:00",
@@ -49,7 +49,7 @@ class SerializersTest {
     }
 
     @Test
-    fun testJwkSerializer() {
+    fun `an ec jwk round trips through json serialization`() {
         val keyPairGenerator = KeyPairGenerator.getInstance("EC")
         keyPairGenerator.initialize(ECGenParameterSpec("secp256r1"))
         val keyPair = keyPairGenerator.generateKeyPair()
