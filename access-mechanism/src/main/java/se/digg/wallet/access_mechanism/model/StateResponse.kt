@@ -15,4 +15,5 @@ data class StateResponse(
     val devAuthorizationCode: String,
     @Serializable(with = JwkSerializer::class) val serverJwsPublicKey: JWK?,
     val opaqueServerId: String,
+    val stateJws: String? = null,
 )
