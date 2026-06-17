@@ -71,7 +71,7 @@ publishing {
         register<MavenPublication>("release") {
             groupId = "se.digg.wallet"
             artifactId = "access-mechanism"
-            version = "0.0.2"
+            version = "0.0.3"
 
             afterEvaluate {
                 from(components["release"])
@@ -85,6 +85,8 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     implementation(libs.kotlinx.serialization.json)
+    // api: CoroutineDispatcher appears in the public OpaqueClient API
+    api(libs.kotlinx.coroutines.core)
     implementation(libs.bouncy.castle.bcprov)
     api(libs.nimbus.jose.jwt)
 

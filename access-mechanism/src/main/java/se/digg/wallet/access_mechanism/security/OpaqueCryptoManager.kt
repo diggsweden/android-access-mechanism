@@ -20,7 +20,6 @@ import java.security.AlgorithmParameters
 import java.security.KeyFactory
 import java.security.KeyPair
 import java.security.PrivateKey
-import java.security.interfaces.ECPrivateKey
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
 import java.security.spec.ECParameterSpec
@@ -39,7 +38,7 @@ internal fun computeThumbprint(publicKey: ECPublicKey): String {
 internal class OpaqueCryptoManager(
     private val serverPublicKey: ECPublicKey,
     private val serverPublicKeyThumbprint: String,
-    private val clientPrivateKey: ECPrivateKey,
+    private val clientPrivateKey: PrivateKey,
     val clientKeyThumbprint: String,
     private val pinStretchPrivateKey: PrivateKey
 ) {
@@ -48,7 +47,7 @@ internal class OpaqueCryptoManager(
     ) : this(
         serverPublicKey = serverPublicKey,
         serverPublicKeyThumbprint = computeThumbprint(serverPublicKey),
-        clientPrivateKey = clientKeyPair.private as? ECPrivateKey
+        clientPrivateKey = clientKeyPair.private.takeIf { it.algorithm == "EC" }
             ?: throw OpaqueException.CryptoException("Client private key must be EC"),
         clientKeyThumbprint = computeThumbprint(
             clientKeyPair.public as? ECPublicKey
@@ -72,7 +71,7 @@ internal class OpaqueCryptoManager(
         )
 
         // sign JWS
-        val signer = ECDSASigner(clientPrivateKey)
+        val signer = ECDSASigner(clientPrivateKey, Curve.P_256)
         jwsObject.sign(signer)
         return jwsObject
     }
@@ -124,7 +123,7 @@ internal class OpaqueCryptoManager(
      * Decrypts a JWE using the client's private key
      */
     fun decrypt(payloadJwe: JWEObject): JWEObject {
-        val decrypter = ECDHDecrypter(clientPrivateKey)
+        val decrypter = ECDHDecrypter(clientPrivateKey, null, Curve.P_256)
         payloadJwe.decrypt(decrypter)
         return payloadJwe
     }
