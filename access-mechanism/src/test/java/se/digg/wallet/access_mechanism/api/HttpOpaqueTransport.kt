@@ -7,7 +7,6 @@ package se.digg.wallet.access_mechanism.api
 import com.nimbusds.jose.jwk.Curve
 import com.nimbusds.jose.jwk.ECKey
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import se.digg.wallet.access_mechanism.model.HSMRequest
 import se.digg.wallet.access_mechanism.model.StateResponse
 import se.digg.wallet.access_mechanism.utils.AppJson
@@ -23,14 +22,14 @@ import java.security.interfaces.ECPublicKey
  * `/hsm/v1/requests`. The latter returns an `AsyncResponseDto`; on a synchronous backend it
  * carries the worker `result` (the server's compact JWS) plus the updated `stateJws`.
  *
- * The transport tracks the latest `stateJws` and threads it into subsequent requests so the
+ * The transport tracks the latest `stateJws` and threads it into later requests so the
  * device state is carried by the client rather than relying on the BFF's server-side store.
  *
- * Lives in the test source set only — the library does not yet ship a concrete transport.
+ * Lives in the test source set only — the library does not ship a concrete transport.
  */
 class HttpOpaqueTransport(private val baseUrl: String) : OpaqueTransport {
 
-    /** Most recent signed device state, seeded at registration and refreshed by each response. */
+    /** The most recent signed device state, seeded at registration and refreshed by each response. */
     private var latestStateJws: String? = null
 
     override suspend fun registerState(

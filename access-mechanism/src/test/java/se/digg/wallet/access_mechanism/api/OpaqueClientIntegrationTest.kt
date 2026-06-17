@@ -4,14 +4,14 @@
 
 package se.digg.wallet.access_mechanism.api
 
+import com.nimbusds.jose.JWSObject
+import com.nimbusds.jose.crypto.ECDSAVerifier
 import com.nimbusds.jose.crypto.impl.ECDSA
 import kotlinx.coroutines.runBlocking
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertTrue
+import org.junit.Assert.*
 import org.junit.Assume
 import org.junit.Test
-import se.digg.wallet.access_mechanism.api.OpaqueClient
+import se.digg.wallet.access_mechanism.api.OpaqueClientIntegrationTest.Companion.BASE_URL
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -20,10 +20,10 @@ import java.security.KeyPairGenerator
 import java.security.Signature
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
-import java.util.Base64
+import java.util.*
 
 /**
- * Integration tests against a live dev backend, mirroring the iOS `APIRequestTests` suite.
+ * Integration tests against a live dev backend.
  *
  * Each test provisions a fresh ephemeral P-256 device key, registers a new device-state,
  * and drives a full OPAQUE/HSM flow through [OpaqueClient] over [HttpOpaqueTransport].
@@ -38,18 +38,16 @@ class OpaqueClientIntegrationTest {
         const val BASE_URL = "http://localhost:8088"
     }
 
-    private fun generateEcKeyPair(): KeyPair =
-        KeyPairGenerator.getInstance("EC").apply {
-            initialize(ECGenParameterSpec("secp256r1"))
-        }.generateKeyPair()
+    private fun generateEcKeyPair(): KeyPair = KeyPairGenerator.getInstance("EC").apply {
+        initialize(ECGenParameterSpec("secp256r1"))
+    }.generateKeyPair()
 
-    /** Provisions a fresh client: ephemeral keys + a newly registered device-state. */
-    private suspend fun newClient(): OpaqueClient =
-        OpaqueClient.create(
-            clientKeyPair = generateEcKeyPair(),
-            pinStretchPrivateKey = generateEcKeyPair().private,
-            transport = HttpOpaqueTransport(BASE_URL)
-        )
+    /** Provisions a fresh client: ephemeral keys and a newly registered device-state. */
+    private suspend fun newClient(): OpaqueClient = OpaqueClient.create(
+        clientKeyPair = generateEcKeyPair(),
+        pinStretchPrivateKey = generateEcKeyPair().private,
+        transport = HttpOpaqueTransport(BASE_URL)
+    )
 
     /**
      * Runs [block] against the backend, converting "backend not running" failures into a
@@ -77,8 +75,7 @@ class OpaqueClientIntegrationTest {
     fun `device state registration returns a state jws`() = integrationTest {
         val transport = HttpOpaqueTransport(BASE_URL)
         val state = transport.registerState(
-            publicKey = generateEcKeyPair().public as ECPublicKey,
-            overwrite = false
+            publicKey = generateEcKeyPair().public as ECPublicKey, overwrite = false
         )
         assertFalse("clientId should not be blank", state.clientId.isBlank())
         assertNotNull("backend should return a stateJws on fresh registration", state.stateJws)
@@ -91,7 +88,10 @@ class OpaqueClientIntegrationTest {
         val pin = "1234"
 
         val registrationExportKey = client.registration(pin)
-        assertTrue("registration export key should not be empty", registrationExportKey.isNotEmpty())
+        assertTrue(
+            "registration export key should not be empty",
+            registrationExportKey.isNotEmpty()
+        )
 
         val authExportKey = client.authenticate(pin)
         assertTrue("authentication export key should not be empty", authExportKey.isNotEmpty())
@@ -107,7 +107,7 @@ class OpaqueClientIntegrationTest {
         client.authenticate("1234")
 
         val keys = client.listHsmKeys()
-        assertTrue("key set should be non-negative", keys.size >= 0)
+        assertTrue("Register-state should have created one hsm key", keys.size == 1)
     }
 
     @Test
@@ -120,7 +120,10 @@ class OpaqueClientIntegrationTest {
         client.createHsmKey()
         val after = client.listHsmKeys().size
 
-        assertTrue("expected at least one more key after create ($before -> $after)", after >= before + 1)
+        assertTrue(
+            "expected at least one more key after create ($before -> $after)",
+            after >= before + 1
+        )
     }
 
     @Test
@@ -148,6 +151,27 @@ class OpaqueClientIntegrationTest {
             update(message)
         }
         assertTrue("HSM signature should verify against the key's public JWK", verifier.verify(der))
+    }
+
+    @Test
+    fun `signing a jws produces a verifiable compact jws`() = integrationTest {
+        val client = newClient()
+        client.registration("1234")
+        client.authenticate("1234")
+
+        val key = client.listHsmKeys().firstOrNull()
+        assertNotNull("expected at least one HSM key to sign with", key)
+        val kid = requireNotNull(key!!.publicKey.keyID) { "HSM key JWK is missing a kid" }
+
+        // signJws transcodes the HSM signature and verifies it internally against the HSM
+        // public key; a non-throwing result means the base64url P1363 signature was handled
+        // correctly. Re-parse and re-verify independently to be certain.
+        val compactJws =
+            client.signJws(kid = kid, payload = "test message", publicHsmKey = key.publicKey)
+
+        val verified = JWSObject.parse(compactJws)
+            .verify(ECDSAVerifier(key.publicKey.toECKey().toECPublicKey()))
+        assertTrue("produced JWS should verify against the HSM public key", verified)
     }
 
     @Test
