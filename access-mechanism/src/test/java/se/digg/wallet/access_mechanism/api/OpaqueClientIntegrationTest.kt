@@ -72,7 +72,7 @@ class OpaqueClientIntegrationTest {
     }
 
     @Test
-    fun `device state registration returns a state jws`() = integrationTest {
+    fun `registering a fresh device state returns a state jws`() = integrationTest {
         val transport = HttpOpaqueTransport(BASE_URL)
         val state = transport.registerState(
             publicKey = generateEcKeyPair().public as ECPublicKey, overwrite = false
@@ -101,7 +101,7 @@ class OpaqueClientIntegrationTest {
     }
 
     @Test
-    fun `listing keys after authentication returns the device key set`() = integrationTest {
+    fun `a freshly registered device has exactly one hsm key`() = integrationTest {
         val client = newClient()
         client.registration("1234")
         client.authenticate("1234")
