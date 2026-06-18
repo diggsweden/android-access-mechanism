@@ -33,17 +33,24 @@ class HttpOpaqueTransport(private val baseUrl: String) : OpaqueTransport {
     private var latestStateJws: String? = null
 
     override suspend fun registerState(
-        publicKey: ECPublicKey,
+        signingPublicKey: ECPublicKey,
+        encryptionPublicKey: ECPublicKey,
         overwrite: Boolean,
         ttl: String?
     ): StateResponse {
         // Send the public JWK with its RFC 7638 thumbprint as `kid`, matching how the
         // client derives its OPAQUE identity (OpaqueCryptoManager.clientKeyThumbprint).
-        val kid = ECKey.Builder(Curve.P_256, publicKey).build().computeThumbprint("SHA-256").toString()
-        val publicJwkJson =
-            ECKey.Builder(Curve.P_256, publicKey).keyID(kid).build().toPublicJWK().toJSONString()
+        val kid = ECKey.Builder(Curve.P_256, signingPublicKey).build().computeThumbprint("SHA-256")
+            .toString()
+        val publicJweJson =
+            ECKey.Builder(Curve.P_256, encryptionPublicKey).keyID(kid).build().toPublicJWK()
+                .toJSONString()
+        val publicJwsJson =
+            ECKey.Builder(Curve.P_256, signingPublicKey).keyID(kid).build().toPublicJWK()
+                .toJSONString()
         val ttlField = ttl?.let { ""","ttl":"$it"""" } ?: ""
-        val body = """{"publicKey":$publicJwkJson,"overwrite":$overwrite$ttlField}"""
+        val body =
+            """{"clientJwePublicKey":$publicJweJson, "clientJwsPublicKey":$publicJwsJson,"overwrite":$overwrite$ttlField}"""
 
         val responseBody = post("/hsm/v1/device-states", body)
         return AppJson.decodeFromString<StateResponse>(responseBody).also {
