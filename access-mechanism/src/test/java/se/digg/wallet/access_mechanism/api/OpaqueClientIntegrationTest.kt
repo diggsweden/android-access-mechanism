@@ -44,7 +44,8 @@ class OpaqueClientIntegrationTest {
 
     /** Provisions a fresh client: ephemeral keys and a newly registered device-state. */
     private suspend fun newClient(): OpaqueClient = OpaqueClient.create(
-        clientKeyPair = generateEcKeyPair(),
+        clientSigningKeyPair = generateEcKeyPair(),
+        clientEncryptionKeyPair = generateEcKeyPair(),
         pinStretchPrivateKey = generateEcKeyPair().private,
         transport = HttpOpaqueTransport(BASE_URL)
     )
@@ -75,7 +76,9 @@ class OpaqueClientIntegrationTest {
     fun `registering a fresh device state returns a state jws`() = integrationTest {
         val transport = HttpOpaqueTransport(BASE_URL)
         val state = transport.registerState(
-            publicKey = generateEcKeyPair().public as ECPublicKey, overwrite = false
+            signingPublicKey = generateEcKeyPair().public as ECPublicKey,
+            encryptionPublicKey = generateEcKeyPair().public as ECPublicKey,
+            overwrite = false
         )
         assertFalse("clientId should not be blank", state.clientId.isBlank())
         assertNotNull("backend should return a stateJws on fresh registration", state.stateJws)

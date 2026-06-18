@@ -37,17 +37,19 @@ class HttpOpaqueTransport(private val baseUrl: String) : OpaqueTransport {
     private var latestStateJws: String? = null
 
     override suspend fun registerState(
-        publicKey: ECPublicKey,
+        signingPublicKey: ECPublicKey,
+        encryptionPublicKey: ECPublicKey,
         overwrite: Boolean,
         ttl: String?
     ): StateResponse {
-        // The RFC 7638 thumbprint as `kid` matches how the client derives its OPAQUE identity
-        // (OpaqueCryptoManager.clientKeyThumbprint).
-        val publicJwk = ECKey.Builder(Curve.P_256, publicKey)
-            .keyIDFromThumbprint()
-            .build()
-            .toPublicJWK()
-        val body = AppJson.encodeToString(StateRequest(publicJwk, overwrite, ttl))
+        // Send the public JWK with its RFC 7638 thumbprint as `kid`, matching how the
+        // client derives its OPAQUE identity (OpaqueCryptoManager.clientKeyThumbprint).
+        val kid = ECKey.Builder(Curve.P_256, signingPublicKey).build().computeThumbprint("SHA-256").toString()
+        val jwsJwk =
+            ECKey.Builder(Curve.P_256, signingPublicKey).keyID(kid).build().toPublicJWK()
+        val jweJwk =
+            ECKey.Builder(Curve.P_256, encryptionPublicKey).keyID(kid).build().toPublicJWK()
+        val body = AppJson.encodeToString(StateRequest(jwsJwk, jweJwk, overwrite, ttl))
 
         val responseBody = post("/hsm/v1/device-states", body)
         return AppJson.decodeFromString<StateResponse>(responseBody).also {
@@ -67,7 +69,8 @@ class HttpOpaqueTransport(private val baseUrl: String) : OpaqueTransport {
 
     @Serializable
     private data class StateRequest(
-        @Serializable(with = JwkSerializer::class) val publicKey: JWK,
+        @Serializable(with = JwkSerializer::class) val clientJwsPublicKey: JWK,
+        @Serializable(with = JwkSerializer::class) val clientJwePublicKey: JWK,
         val overwrite: Boolean,
         val ttl: String? = null
     )
