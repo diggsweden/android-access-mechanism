@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Publish to Central Portal endpoints instead of legacy OSSRH
 - Use 2-arg useInMemoryPgpKeys for GPG signing
 - Adjust and use authorizationCode
 
