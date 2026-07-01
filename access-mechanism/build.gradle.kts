@@ -139,13 +139,12 @@ publishing {
     }
 }
 
-val signingKeyId: String = findProperty("signingKeyId") as String? ?: ""
 val signingKey: String = findProperty("signingKey") as String? ?: ""
 val signingPassword: String = findProperty("signingPassword") as String? ?: ""
 
 signing {
-    if (signingKeyId.isNotBlank() && signingKey.isNotBlank()) {
-        useInMemoryPgpKeys(signingKeyId, signingKey, signingPassword)
+    if (signingKey.isNotBlank()) {
+        useInMemoryPgpKeys(signingKey, signingPassword)
         sign(publishing.publications["release"])
     }
 }
