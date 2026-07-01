@@ -71,7 +71,7 @@ publishing {
         register<MavenPublication>("release") {
             groupId = "se.digg.wallet"
             artifactId = "access-mechanism"
-            version = "0.0.3"
+            version = "0.0.4"
 
             afterEvaluate {
                 from(components["release"])

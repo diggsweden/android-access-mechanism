@@ -44,7 +44,7 @@ class OpaqueClient private constructor(
     private val responseProcessor = ResponseProcessor(cryptoManager)
     private val opaqueClientId: String = cryptoManager.clientKeyThumbprint
     private val serverIdentifier: String = serverParameters.opaqueServerId
-    val clientId: String = serverParameters.stateId
+    val clientId: String? = serverParameters.stateId
     private val opaqueContext: String = serverParameters.opaqueContext
     private var session: OpaqueSession? = null
 
@@ -116,15 +116,15 @@ class OpaqueClient private constructor(
      * @param pin The user's raw PIN.
      * @return The OPAQUE export key derived from the registration.
      */
-    suspend fun registration(pin: String, stateJws: String? = null): ByteArray = withContext(dispatcher) {
+    suspend fun registration(pin: String): ByteArray = withContext(dispatcher) {
         val authCode = requireNotNull(devAuthorizationCode) {
             "No authorization code available — client must be created via OpaqueClient.create()"
         }
         devAuthorizationCode = null
         val start = registrationStart(pin, authCode)
-        val startResponse = transport.perform(HSMRequest(clientId, start.registrationRequest, stateJws), HSMOperationType.REGISTER_PIN)
+        val startResponse = transport.perform(HSMRequest(start.registrationRequest, clientId), HSMOperationType.REGISTER_PIN)
         val finish = registrationFinish(pin, authCode, startResponse, start.clientRegistration)
-        val finishResponse = transport.perform(HSMRequest(clientId, finish.registrationUpload, stateJws), HSMOperationType.REGISTER_PIN)
+        val finishResponse = transport.perform(HSMRequest(finish.registrationUpload, clientId), HSMOperationType.REGISTER_PIN)
         responseProcessor.unwrapPakeResponse(finishResponse)
         finish.exportKey
     }
@@ -137,11 +137,11 @@ class OpaqueClient private constructor(
      * @param task Optional task label for the session. Defaults to "general".
      * @return The OPAQUE export key derived from authentication.
      */
-    suspend fun authenticate(pin: String, task: String = "general", stateJws: String? = null): ByteArray = withContext(dispatcher) {
+    suspend fun authenticate(pin: String, task: String = "general"): ByteArray = withContext(dispatcher) {
         val start = loginStart(pin)
-        val startResponse = transport.perform(HSMRequest(clientId, start.loginRequest, stateJws), HSMOperationType.CREATE_SESSION)
+        val startResponse = transport.perform(HSMRequest(start.loginRequest, clientId), HSMOperationType.CREATE_SESSION)
         val finish = loginFinish(pin, startResponse, start.clientRegistration, task)
-        val finishResponse = transport.perform(HSMRequest(clientId, finish.loginFinishRequest, stateJws), HSMOperationType.CREATE_SESSION)
+        val finishResponse = transport.perform(HSMRequest(finish.loginFinishRequest, clientId), HSMOperationType.CREATE_SESSION)
         responseProcessor.unwrapPakeResponse(finishResponse)
         session = OpaqueSession(finish.sessionKey, finish.pakeSessionId)
         finish.exportKey
@@ -154,12 +154,12 @@ class OpaqueClient private constructor(
      * @param newPin The user's new raw PIN.
      * @return The OPAQUE export key derived from the new PIN registration.
      */
-    suspend fun changePin(newPin: String, stateJws: String? = null): ByteArray = withContext(dispatcher) {
+    suspend fun changePin(newPin: String): ByteArray = withContext(dispatcher) {
         val (sessionKey, pakeSessionId) = requireSession()
         val start = changePinStart(newPin, sessionKey, pakeSessionId)
-        val startResponse = transport.perform(HSMRequest(clientId, start.registrationRequest, stateJws), HSMOperationType.CHANGE_PIN)
+        val startResponse = transport.perform(HSMRequest(start.registrationRequest, clientId), HSMOperationType.CHANGE_PIN)
         val finish = changePinFinish(newPin, startResponse, start.clientRegistration, sessionKey, pakeSessionId)
-        val finishResponse = transport.perform(HSMRequest(clientId, finish.registrationUpload, stateJws), HSMOperationType.CHANGE_PIN)
+        val finishResponse = transport.perform(HSMRequest(finish.registrationUpload, clientId), HSMOperationType.CHANGE_PIN)
         responseProcessor.unwrapResponse(finishResponse, sessionKey)
         finish.exportKey
     }
@@ -169,13 +169,13 @@ class OpaqueClient private constructor(
      *
      * @return The decrypted JSON response from the server containing the key details.
      */
-    suspend fun createHsmKey(stateJws: String? = null): String = withContext(dispatcher) {
+    suspend fun createHsmKey(): String = withContext(dispatcher) {
         val (sessionKey, pakeSessionId) = requireSession()
         val innerRequestData = AppJson.encodeToString(mapOf("curve" to "P-256"))
         val request = messageFactory.createSessionEncryptedRequest(
             sessionKey, pakeSessionId, innerRequestData, HSM_GENERATE_KEY
         )
-        val response = transport.perform(HSMRequest(clientId, request.serialize(), stateJws), HSMOperationType.CREATE_KEY)
+        val response = transport.perform(HSMRequest(request.serialize(), clientId), HSMOperationType.CREATE_KEY)
         responseProcessor.unwrapResponse(response, sessionKey).response
     }
 
@@ -184,13 +184,13 @@ class OpaqueClient private constructor(
      *
      * @return A list of [KeyInfo] describing available HSM keys.
      */
-    suspend fun listHsmKeys(stateJws: String? = null): List<KeyInfo> = withContext(dispatcher) {
+    suspend fun listHsmKeys(): List<KeyInfo> = withContext(dispatcher) {
         val (sessionKey, pakeSessionId) = requireSession()
         val innerRequestData = AppJson.encodeToString(mapOf("curves" to listOf<String>()))
         val request = messageFactory.createSessionEncryptedRequest(
             sessionKey, pakeSessionId, innerRequestData, HSM_LIST_KEYS
         )
-        val response = transport.perform(HSMRequest(clientId, request.serialize(), stateJws), HSMOperationType.LIST_KEYS)
+        val response = transport.perform(HSMRequest(request.serialize(), clientId), HSMOperationType.LIST_KEYS)
         val json = responseProcessor.unwrapResponse(response, sessionKey).response
         val map = AppJson.decodeFromString<Map<String, List<KeyInfo>>>(json)
         checkNotNull(map["key_info"]) { "key_info is missing in response" }
@@ -201,7 +201,7 @@ class OpaqueClient private constructor(
      *
      * @param kid The key ID of the HSM key to delete.
      */
-    suspend fun deleteHsmKey(kid: String, stateJws: String? = null) {
+    suspend fun deleteHsmKey(kid: String) {
         withContext(dispatcher) {
             val (sessionKey, pakeSessionId) = requireSession()
             validateInput(kid.isNotBlank(), "kid cannot be blank")
@@ -209,7 +209,7 @@ class OpaqueClient private constructor(
             val request = messageFactory.createSessionEncryptedRequest(
                 sessionKey, pakeSessionId, innerRequestData, HSM_DELETE_KEY
             )
-            transport.perform(HSMRequest(clientId, request.serialize(), stateJws), HSMOperationType.DELETE_KEY)
+            transport.perform(HSMRequest(request.serialize(), clientId), HSMOperationType.DELETE_KEY)
         }
     }
 
@@ -221,7 +221,7 @@ class OpaqueClient private constructor(
      * @param data The raw bytes to sign.
      * @return A [SignatureResponse] containing the P1363-encoded signature.
      */
-    suspend fun sign(kid: String, data: ByteArray, stateJws: String? = null): SignatureResponse = withContext(dispatcher) {
+    suspend fun sign(kid: String, data: ByteArray): SignatureResponse = withContext(dispatcher) {
         val (sessionKey, pakeSessionId) = requireSession()
         validateInput(kid.isNotBlank(), "kid cannot be blank")
 
@@ -231,7 +231,7 @@ class OpaqueClient private constructor(
             sessionKey, pakeSessionId, innerRequestData, HSM_SIGN
         )
 
-        val response = transport.perform(HSMRequest(clientId, request.serialize(), stateJws), HSMOperationType.SIGN)
+        val response = transport.perform(HSMRequest(request.serialize(), clientId), HSMOperationType.SIGN)
         val responseData = responseProcessor.unwrapResponse(response, sessionKey).response
         val signatureValue = AppJson.decodeFromString<Map<String, String>>(responseData)["signature"]
             ?: throw OpaqueException.ProtocolException("Missing signature in response")
@@ -252,8 +252,7 @@ class OpaqueClient private constructor(
         kid: String,
         payload: String,
         curve: String = "P-256",
-        publicHsmKey: JWK,
-        stateJws: String? = null
+        publicHsmKey: JWK
     ): String = withContext(dispatcher) {
         val (sessionKey, pakeSessionId) = requireSession()
         validateInput(kid.isNotBlank(), "kid cannot be blank")
@@ -269,7 +268,7 @@ class OpaqueClient private constructor(
             sessionKey, pakeSessionId, innerRequestData, HSM_SIGN
         )
 
-        val response = transport.perform(HSMRequest(clientId, request.serialize(), stateJws), HSMOperationType.SIGN)
+        val response = transport.perform(HSMRequest(request.serialize(), clientId), HSMOperationType.SIGN)
         val responseData = responseProcessor.unwrapResponse(response, sessionKey).response
         val signatureValue =
             AppJson.decodeFromString<Map<String, String>>(responseData)["signature"]

@@ -11,8 +11,8 @@ import se.digg.wallet.access_mechanism.utils.JwkSerializer
 @Serializable
 data class StateResponse(
     val status: String,
-    val clientId: String,
     val devAuthorizationCode: String,
     @Serializable(with = JwkSerializer::class) val serverJwsPublicKey: JWK?,
     val opaqueServerId: String,
+    val clientId: String? = null,
 )
