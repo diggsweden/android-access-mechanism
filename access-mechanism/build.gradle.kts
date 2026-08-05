@@ -72,7 +72,7 @@ val githubToken: String = findProperty("githubToken") as String? ?: ""
 val githubActor: String = findProperty("githubActor") as String? ?: ""
 val mavenCentralUsername: String = findProperty("mavenCentralUsername") as String? ?: ""
 val mavenCentralPassword: String = findProperty("mavenCentralPassword") as String? ?: ""
-val publishVersion: String = findProperty("VERSION_NAME") as String? ?: "0.0.1-SNAPSHOT"
+val publishVersion: String = findProperty("version") as String? ?: "0.0.1-SNAPSHOT"
 
 publishing {
     publications {
