@@ -6,8 +6,10 @@ package se.digg.wallet.access_mechanism.api
 
 import com.nimbusds.jose.jwk.Curve
 import com.nimbusds.jose.jwk.ECKey
+import kotlinx.serialization.ExperimentalSerializationApi
 import com.nimbusds.jose.jwk.JWK
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonIgnoreUnknownKeys
 import se.digg.wallet.access_mechanism.model.HSMRequest
 import se.digg.wallet.access_mechanism.model.StateResponse
 import se.digg.wallet.access_mechanism.utils.AppJson
@@ -71,7 +73,9 @@ class HttpOpaqueTransport(private val baseUrl: String) : OpaqueTransport {
     )
 
     /** Mirrors the backend `AsyncResponseDto` (camelCase). Only the fields we consume are modeled. */
+    @OptIn(ExperimentalSerializationApi::class)
     @Serializable
+    @JsonIgnoreUnknownKeys
     private data class AsyncResponse(
         val correlationId: String? = null,
         val status: String? = null,

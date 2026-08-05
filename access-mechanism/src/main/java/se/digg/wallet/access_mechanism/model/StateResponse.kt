@@ -5,10 +5,14 @@
 package se.digg.wallet.access_mechanism.model
 
 import com.nimbusds.jose.jwk.JWK
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonIgnoreUnknownKeys
 import se.digg.wallet.access_mechanism.utils.JwkSerializer
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
+@JsonIgnoreUnknownKeys
 data class StateResponse(
     val status: String,
     val clientId: String,
