@@ -1,0 +1,36 @@
+#Test
+name: Release Snapshot Workflow
+on:
+  push:
+    branches:
+      - test/reusable-3
+  workflow_dispatch:
+
+concurrency:
+  group: release-snapshot-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot-release:
+    uses: diggsweden/reusable-ci/.github/workflows/release-snapshot-orchestrator.yml@test/gradle-publish-e2e
+    permissions:
+      contents: read
+      packages: write
+      actions: read
+    secrets:
+      MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME }}
+      MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.OSPO_BOT_GPG_PRIV }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.OSPO_BOT_GPG_PASS }}
+    with:
+      reusable-ci-binary-ref: test/gradle-publish-e2e
+      artifacts-config: .github/artifacts.yml
+      publish-gradle: true
+      publish-npm: false
+      runtime-image: ghcr.io/diggsweden/reusable-ci-runtime-base:test-gradle-publish-e2e
+      runtime-image-full: ghcr.io/diggsweden/reusable-ci-runtime:test-gradle-publish-e2e
+      runtime-image-java: ghcr.io/diggsweden/reusable-ci-runtime-java-25:test-gradle-publish-e2e
+      runtime-image-android: ghcr.io/diggsweden/reusable-ci-runtime-android-35:test-gradle-publish-e2e
