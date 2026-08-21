@@ -72,14 +72,12 @@ val githubToken: String = findProperty("githubToken") as String? ?: ""
 val githubActor: String = findProperty("githubActor") as String? ?: ""
 val mavenCentralUsername: String = findProperty("mavenCentralUsername") as String? ?: ""
 val mavenCentralPassword: String = findProperty("mavenCentralPassword") as String? ?: ""
-val publishVersion: String = findProperty("version") as String? ?: "0.0.1-SNAPSHOT"
 
 publishing {
     publications {
         register<MavenPublication>("release") {
             groupId = "se.digg.wallet"
             artifactId = "access-mechanism"
-            version = publishVersion
 
             afterEvaluate {
                 from(components["release"])

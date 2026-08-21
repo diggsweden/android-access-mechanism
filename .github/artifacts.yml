@@ -1,20 +1,39 @@
 # SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
-
-# Artifacts Configuration 
-# Gradle library published to Maven Central
-
+#
+# Test config for the reusable-ci v3 gradle publishing path.
 artifacts:
   - name: android-access-mechanism
-    project-type: gradle
+    # com.android.library — this routes to build-gradle-android.yml and the
+    # android-35 runtime image. `gradle` would route to build-gradle-app.yml
+    # on the java image, which has no Android SDK.
+    project-type: gradle-android
     working-directory: .
+    # Required for maven-central, and what makes the AAR publish through
+    # publish-gradle.yml instead of going to Google Play.
     build-type: library
     publish-to:
       - maven-central
     config:
-      java-version: 21
-      gradle-tasks: build
-      gradle-version-file: gradle.properties
-      publish-tasks: publish
-      setup-android: true
+      # The gradle module. Without this the AAR upload path resolves to
+      # ./build/outputs/aar/ instead of access-mechanism/build/outputs/aar/
+      # and the upload fails with if-no-files-found: error.
+      build-module: access-mechanism
+      #
+      # Deliberately NOT set:
+      #
+      # publish-tasks — this project uses plain maven-publish and names its
+      #   repository block MavenCentral, so the derived
+      #   publishAllPublicationsToMavenCentralRepository task already exists.
+      #   `publishToMavenCentral` is a vanniktech-plugin task and does not
+      #   exist here; setting it fails with "task not found".
+      #
+      # gradle-tasks — not honoured for gradle-android on the orchestrator
+      #   path; the task list is derived from build-type/flavor/module.
+      #
+      # java-version — build-gradle-android.yml has no such input. The JDK
+      #   comes from the runtime image.
+      #
+      # enable-android-signing — libraries are not keystore-signed; Maven
+      #   Central signing uses the GPG release key in publish-gradle.yml.
