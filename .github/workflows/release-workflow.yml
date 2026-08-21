@@ -1,38 +1,43 @@
-# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-#
-# SPDX-License-Identifier: CC0-1.0
-
-# Release Workflow 
-# Uses the unified release orchestrator with Maven library publisher
 name: Release Workflow
 
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+" # Stable: v1.0.0
-      - "v[0-9]+.[0-9]+.[0-9]+-SNAPSHOT*" # Snapshot: v1.0.0-SNAPSHOT
+      - "release-request/v[0-9]+.[0-9]+.[0-9]+"
+      - "release-request/v[0-9]+.[0-9]+.[0-9]+-SNAPSHOT*"
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false # Queue releases, don't cancel partial releases
+  cancel-in-progress: false
 
 permissions:
-  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+  contents: read
 
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@feat/publish-gradle
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@test/gradle-publish-e2e
     permissions:
-      contents: write # Create GitHub releases and tags
-      packages: write # Publish to GitHub Packages (backup)
-      id-token: write # Generate OIDC token for Maven Central
-      actions: read # Needed by container job (even if skipped)
-      attestations: write # Needed by container job (even if skipped)
-      security-events: write # Needed by container job (even if skipped)
-    secrets: inherit # Use org-level MAVEN_CENTRAL credentials and GPG keys
+      contents: write
+      packages: write
+      id-token: write
+      actions: read
+      attestations: write
+      security-events: write
+    secrets:
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.OSPO_BOT_GPG_PRIV }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.OSPO_BOT_GPG_PASS }}
+      MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME }}
+      MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
+      CODE_SCANNING_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
+      RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY }}
+      RELEASE_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
     with:
-      reusable-ci-ref: feat/publish-gradle
+      reusable-ci-binary-ref: test/gradle-publish-e2e
       artifacts-config: .github/artifacts.yml
-      branch: ci/publish-to-maven-central
+      branch: test/reusable-3
       changelog-creator: git-cliff
       release-publisher: github-cli
+      runtime-image: ghcr.io/diggsweden/reusable-ci-runtime-base:test-gradle-publish-e2e
+      runtime-image-full: ghcr.io/diggsweden/reusable-ci-runtime:test-gradle-publish-e2e
+      runtime-image-java: ghcr.io/diggsweden/reusable-ci-runtime-java-25:test-gradle-publish-e2e
+      runtime-image-android: ghcr.io/diggsweden/reusable-ci-runtime-android-35:test-gradle-publish-e2e
