@@ -9,3 +9,7 @@
 .cxx
 local.properties
 PROJECT_INDEX.md
+
+# Host-architecture-specific test-only native slice. Build locally with
+# `make desktop` in the opaque_ke_uniffi repo; not committed (see README).
+access-mechanism/libs/opaque_ke_uniffi-desktop.jar
