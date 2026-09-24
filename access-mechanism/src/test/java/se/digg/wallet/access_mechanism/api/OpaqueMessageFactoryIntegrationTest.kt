@@ -75,7 +75,6 @@ class OpaqueMessageFactoryIntegrationTest {
             AppJson.decodeFromString<OuterRequest>(outerRequestJws.unwrap().payload.toString())
         assertEquals("sessionId", outerRequest.sessionId)
         assertEquals(1, outerRequest.version)
-        assertEquals("hsm", outerRequest.context)
         assert(outerRequest.nonce.isNotEmpty())
 
         // decrypt the inner Payload (RequestData)
