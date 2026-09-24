@@ -4,12 +4,16 @@
 
 package se.digg.wallet.access_mechanism.model
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonIgnoreUnknownKeys
 import se.digg.wallet.access_mechanism.utils.DurationIso8601Serializer
 import java.time.Duration
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
+@JsonIgnoreUnknownKeys
 internal data class InnerResponse(
     val data: String? = null,
     @SerialName("expires_in") @Serializable(with = DurationIso8601Serializer::class) val expiresIn: Duration? = null,

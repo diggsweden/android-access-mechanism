@@ -37,6 +37,23 @@ the [opaque_ke_uniffi](https://github.com/diggsweden/opaque_ke_uniffi) repositor
 The build script is configured to extract JNI libraries and classes from this AAR to bundle them
 into the final output, creating a "fat" AAR that is straightforward to consume.
 
+## Testing
+
+### Integration tests
+
+The integration tests exercise the real OPAQUE bindings on the host JVM (no emulator). This
+requires a host-native slice, `opaque_ke_uniffi-desktop.jar`, in `access-mechanism/libs/`.
+
+This jar is **architecture-specific and is not committed** — each platform needs its own build.
+Produce it with `make desktop` in the
+[opaque_ke_uniffi](https://github.com/diggsweden/opaque_ke_uniffi) repository, then copy the
+result into `access-mechanism/libs/`.
+
+The build adds the jar to the test classpath only when it is present. Without it, `./gradlew test`
+still compiles and runs, but the integration tests `Assume`-skip rather than fail. Because a
+missing jar silently skips these tests, CI should build (or assert the presence of) the slice so
+runs are guaranteed to exercise the real bindings.
+
 ## Usage
 
 All operations are exposed through a single entry point:

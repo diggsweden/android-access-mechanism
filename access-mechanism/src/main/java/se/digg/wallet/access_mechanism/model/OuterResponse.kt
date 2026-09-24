@@ -4,10 +4,14 @@
 
 package se.digg.wallet.access_mechanism.model
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonIgnoreUnknownKeys
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
+@JsonIgnoreUnknownKeys
 internal data class OuterResponse(
     val version: Int,
     @SerialName("session_id") val sessionId: String? = null,

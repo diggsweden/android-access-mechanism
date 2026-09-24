@@ -19,6 +19,7 @@ import java.time.Duration
 import java.time.Instant
 import java.util.Base64
 
+// Strict on unknown keys; server-produced types opt out with @JsonIgnoreUnknownKeys.
 internal val AppJson = Json {
     encodeDefaults = true
     explicitNulls = false

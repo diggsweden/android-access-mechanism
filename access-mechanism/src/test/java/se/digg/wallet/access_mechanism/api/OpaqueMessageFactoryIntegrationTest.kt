@@ -56,7 +56,7 @@ class OpaqueMessageFactoryIntegrationTest {
     }
 
     @Test
-    fun `createOpaqueRequest returns a valid signed JWS containing encrypted payload`() {
+    fun `a pake request is signed by the client and encrypted for the server`() {
         // arrange
         val requestBytes = "someRequest".toByteArray()
 
@@ -94,7 +94,7 @@ class OpaqueMessageFactoryIntegrationTest {
     }
 
     @Test
-    fun `server response is successfully unwrapped`() {
+    fun `a valid server response is unwrapped into its pake response`() {
         // arrange
         val pakeRequest = PakeRequest(data = "someResponse".toByteArray(), task = "someTask")
         val pakeRequestJson = AppJson.encodeToString(pakeRequest)
@@ -122,7 +122,7 @@ class OpaqueMessageFactoryIntegrationTest {
 
 
     @Test
-    fun `unwrapping fails if response is not signed by server`() {
+    fun `a response not signed by the server is rejected`() {
         // arrange
         val responseBytes = "someResponse".toByteArray()
 
@@ -138,7 +138,7 @@ class OpaqueMessageFactoryIntegrationTest {
     }
 
     @Test
-    fun `unwrapping fails if response cannot be decrypted`() {
+    fun `a response encrypted for the wrong key is rejected`() {
         // arrange
         val innerResponse = InnerResponse(data = "someData", status = Status.OK, version = 1)
         val innerSerialized = AppJson.encodeToString(innerResponse).toByteArray()
@@ -159,7 +159,7 @@ class OpaqueMessageFactoryIntegrationTest {
     }
 
     @Test
-    fun `unwrapping fails if inner response status is ERROR`() {
+    fun `a server response with an error status is rejected`() {
         // arrange
         val innerResponse = InnerResponse(data = null, status = Status.ERROR, version = 1)
         val innerSerialized = AppJson.encodeToString(innerResponse).toByteArray()

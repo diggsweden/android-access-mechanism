@@ -4,10 +4,14 @@
 
 package se.digg.wallet.access_mechanism.model
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonIgnoreUnknownKeys
 import se.digg.wallet.access_mechanism.utils.Base64ByteArraySerializer
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
+@JsonIgnoreUnknownKeys
 internal data class PakeResponse(
     val task: String?,
     @Serializable(with = Base64ByteArraySerializer::class) val data: ByteArray?
