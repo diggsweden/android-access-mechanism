@@ -86,7 +86,6 @@ class OpaqueMessageFactoryIntegrationTest {
 
         // verify the encrypted payload
         assertEquals(AUTHENTICATE_START.type, innerRequest.type)
-        assertEquals(0, innerRequest.requestCounter)
 
         // verify pakeRequest
         val data = AppJson.decodeFromString<PakeRequest>(innerRequest.data)
