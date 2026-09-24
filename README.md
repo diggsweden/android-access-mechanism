@@ -60,99 +60,102 @@ All operations are exposed through a single entry point:
 
     se.digg.wallet.access_mechanism.api.OpaqueClient
 
+Every operation is a `suspend` function. The client drives the OPAQUE and session-encryption
+protocols internally; the host app only supplies the network layer.
+
+### Transport
+
+The library does not ship an HTTP client. Implement `OpaqueTransport` to connect it to your backend:
+
+```kotlin
+interface OpaqueTransport {
+    suspend fun registerState(publicKey: ECPublicKey, overwrite: Boolean, ttl: String? = null): StateResponse
+    suspend fun perform(request: HSMRequest, operation: HSMOperationType): String
+}
+```
+
+- `registerState` registers the device's public key and returns the server's `StateResponse`.
+- `perform` sends an `HSMRequest` (`clientId` + `outerRequestJws`) and returns the server's compact
+  JWS response. `operation` tells the transport which HSM operation the request belongs to.
+
 ### Initialization
 
-Instantiate `OpaqueClient` with the following parameters:
+On first launch, create the client. This registers the device with the server and fetches the
+server parameters:
 
-| Parameter              | Description                                                          |
-|------------------------|----------------------------------------------------------------------|
-| `serverPublicKey`      | The server's EC public key                                           |
-| `clientKeyPair`        | Client KeyPair (should be stored in secure hardware)                 |
-| `pinStretchPrivateKey` | Private key for PIN stretching (should be stored in secure hardware) |
-| `serverIdentifier`     | Server identifier                                                    |
-| `opaqueContext`        | OPAQUE protocol context                                              |
+```kotlin
+val client = OpaqueClient.create(
+    clientKeyPair = clientKeyPair,               // should be stored in secure hardware
+    pinStretchPrivateKey = pinStretchPrivateKey, // should be stored in secure hardware
+    transport = transport
+)
+```
+
+Optional parameters are `opaqueContext` (default `"RPS-Ops"`), `ttl`, `overwrite` and `dispatcher`
+(default `Dispatchers.IO`).
+
+Persist `client.serverParameters`. On later launches, rebuild the client from them without a
+network call:
+
+```kotlin
+val client = OpaqueClient.resume(transport, savedServerParameters, clientKeyPair, pinStretchPrivateKey)
+```
 
 ---
 
 ### Register PIN
 
-Register a PIN for the device. This is a two-step process that needs to be performed once before a
-session can be created.
+Register a PIN once, directly after `create()`. The one-time authorization code from the state
+response is used and then discarded, so `registration()` fails on a client built with `resume()`.
 
-1. Call `registrationStart(pin)` → returns `registrationRequest` + `clientRegistration`.
-2. Send `registrationRequest` to the server.
-3. Call `registrationFinish()` with the `pin`,an `authorizationCode`, the server's response and
-   `clientRegistration` from step 1.
-4. Send `registrationUpload` from step 3 to the server.
-5. *(Optional)* Call `decryptStatus()` with the server's response and verify it returns `"OK"`.
+```kotlin
+val exportKey: ByteArray = client.registration(pin)
+```
 
-> `authorizationCode` is a temporary code that will be set during onboarding. Its use is still TBD.
-> During development any non-empty ByteArray can be passed.
 ---
 
 ### Create Session
 
-A new session will be required for each HSM operation.
+Authenticate with the PIN to establish a session. Every operation below requires an active session.
 
-1. Call `loginStart(pin)` → returns `loginRequest` + `clientRegistration`.
-2. Send `loginRequest` to the server.
-3. Call `loginFinish()` with the `pin`, the server's response and `clientRegistration` from step 1.
-4. Send `loginFinishRequest` from step 3 to the server.
-5. If step 4 is successful, the sessionKey is ready to be used.
+```kotlin
+val exportKey: ByteArray = client.authenticate(pin)  // optional: task = "general"
+```
 
-> The **`sessionKey`** and **`pakeSessionId`** are available from step 3. These are required for
-> all later operations.
+### Change PIN
+
+Requires an active session.
+
+```kotlin
+val exportKey: ByteArray = client.changePin(newPin)
+```
 
 ---
 
 ### HSM Key Management
 
-Once a session is established, you can manage HSM-backed keys on the server. All operations below
-require a `sessionKey` and `pakeSessionId` from [Create Session](#create-session).
-
-#### Create a HSM Key
-
-1. val request = client.createHsmKey(sessionKey, pakeSessionId).
-2. Send the request to the server.
-3. Call `decryptPayload()` with the response from step 2 and the `sessionKey` to decrypt the payload
-   from the server.
-
-#### List Keys
-
-1. val request = client.listHsmKeys(sessionKey, pakeSessionId).
-2. Send the request to the server
-3. Call `decryptKeys()` with the response from step 2 and the `sessionKey`) to get a list of
-   available keys.
-
-#### Delete a Key
-
-1. val request = client.deleteHsmKey(sessionKey, pakeSessionId, `kid`).
-2. Send the request to the server.
-3. Call 'decryptPayload()' with the response from step 2 and the `sessionKey` to verify the deletion
-   was successful.
+| Call                | Returns                                               |
+|---------------------|-------------------------------------------------------|
+| `createHsmKey()`    | `KeyResponse`: public key of a new P-256 key          |
+| `listHsmKeys()`     | `List<KeyInfo>`: public key and creation time per key |
+| `deleteHsmKey(kid)` | `Unit`                                                |
 
 ---
 
 ### HSM Signing
 
-Sign a payload using a server-side HSM key. This is a two-step process:
-
-1. Call `signWithHsm()` with the `sessionKey`, `pakeSessionId`, `kid` (keyId of the key to use) and
-   the payload to sign. Returns a `PendingSignature` containing the local state and the request.
-2. Send the request to the server.
-3. Call `decryptSign()` with the `sessionKey`, `PendingSignature` from step 1, the response
-   from step 2, and the HSM keys public key. Returns a fully signed and verified JWS.
+| Call                                                   | Returns                                                     |
+|--------------------------------------------------------|-------------------------------------------------------------|
+| `sign(kid, data)`                                      | `SignatureResponse`: P1363 signature over SHA-256 of `data` |
+| `signJws(kid, payload, curve = "P-256", publicHsmKey)` | Compact JWS, verified against `publicHsmKey`                |
 
 ---
 
-### Decrypting Server Responses
+### Errors
 
-| Method             | Use case                                             |
-|--------------------|------------------------------------------------------|
-| `decryptStatus()`  | Unwrap a PAKE response and read its status           |
-| `decryptPayload()` | Decrypt a session-encrypted response as raw JSON     |
-| `decryptKeys()`    | Decrypt and deserialize a `listHsmKeys` response     |
-| `decryptSign()`    | Decrypt a signing response and assemble a signed JWS |
+Failures are thrown as subclasses of `OpaqueException`: `CryptoException`, `ProtocolException` or
+`InvalidInputException`. Calling a session operation before `authenticate()` throws
+`IllegalStateException`.
 
 ---
 
