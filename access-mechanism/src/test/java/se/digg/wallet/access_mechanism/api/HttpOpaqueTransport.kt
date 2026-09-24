@@ -24,17 +24,11 @@ import java.security.interfaces.ECPublicKey
  *
  * POSTs device-state registration to `/hsm/v1/device-states` and every signed operation to
  * `/hsm/v1/requests`. The latter returns an `AsyncResponseDto`; on a synchronous backend it
- * carries the worker `result` (the server's compact JWS) plus the updated `stateJws`.
- *
- * The transport tracks the latest `stateJws` and threads it into later requests so the
- * device state is carried by the client rather than relying on the BFF's server-side store.
+ * carries the worker `result` (the server's compact JWS).
  *
  * Lives in the test source set only — the library does not ship a concrete transport.
  */
 class HttpOpaqueTransport(private val baseUrl: String) : OpaqueTransport {
-
-    /** The most recent signed device state, seeded at registration and refreshed by each response. */
-    private var latestStateJws: String? = null
 
     override suspend fun registerState(
         publicKey: ECPublicKey,
@@ -50,16 +44,12 @@ class HttpOpaqueTransport(private val baseUrl: String) : OpaqueTransport {
         val body = AppJson.encodeToString(StateRequest(publicJwk, overwrite, ttl))
 
         val responseBody = post("/hsm/v1/device-states", body)
-        return AppJson.decodeFromString<StateResponse>(responseBody).also {
-            latestStateJws = it.stateJws
-        }
+        return AppJson.decodeFromString<StateResponse>(responseBody)
     }
 
     override suspend fun perform(request: HSMRequest, operation: HSMOperationType): String {
-        val effective = request.copy(stateJws = request.stateJws ?: latestStateJws)
-        val responseBody = post("/hsm/v1/requests", AppJson.encodeToString(effective))
+        val responseBody = post("/hsm/v1/requests", AppJson.encodeToString(request))
         val async = AppJson.decodeFromString<AsyncResponse>(responseBody)
-        async.stateJws?.let { latestStateJws = it }
         return async.result ?: throw IOException(
             "Request not completed synchronously (status=${async.status}); no result in /hsm/v1/requests response"
         )
@@ -80,8 +70,7 @@ class HttpOpaqueTransport(private val baseUrl: String) : OpaqueTransport {
         val correlationId: String? = null,
         val status: String? = null,
         val result: String? = null,
-        val resultUrl: String? = null,
-        val stateJws: String? = null
+        val resultUrl: String? = null
     )
 
     private fun post(path: String, body: String): String {
