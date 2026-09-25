@@ -68,7 +68,7 @@ class OpaqueClientIntegrationTest {
     @Test
     fun `registering a new device state yields a client id`() = integrationTest {
         val client = newClient()
-        assertFalse("clientId should not be blank", client.clientId.isBlank())
+        assertFalse("clientId should not be blank", client.clientId.isNullOrBlank())
     }
 
     @Test
@@ -77,7 +77,7 @@ class OpaqueClientIntegrationTest {
         val state = transport.registerState(
             publicKey = generateEcKeyPair().public as ECPublicKey, overwrite = false
         )
-        assertFalse("clientId should not be blank", state.clientId.isBlank())
+        assertFalse("clientId should not be blank", state.clientId.isNullOrBlank())
         assertNotNull("backend should return a stateJws on fresh registration", state.stateJws)
         assertFalse("stateJws should not be blank", state.stateJws!!.isBlank())
     }

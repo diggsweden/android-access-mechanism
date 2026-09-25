@@ -9,6 +9,6 @@ import java.security.interfaces.ECPublicKey
 data class ServerParameters(
     val serverPublicKey: ECPublicKey,
     val opaqueServerId: String,
-    val clientId: String,
+    val clientId: String? = null,
     val opaqueContext: String = "RPS-Ops"
 )

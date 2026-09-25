@@ -41,7 +41,7 @@ class OpaqueClient private constructor(
     private val responseProcessor = ResponseProcessor(cryptoManager)
     private val opaqueClientId: String = cryptoManager.clientKeyThumbprint
     private val serverIdentifier: String = serverParameters.opaqueServerId
-    val clientId: String = serverParameters.clientId
+    val clientId: String? = serverParameters.clientId
     private val opaqueContext: String = serverParameters.opaqueContext
     private var session: OpaqueSession? = null
 
