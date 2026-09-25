@@ -8,6 +8,6 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class HSMRequest(
-    val clientId: String,
+    val clientId: String? = null,
     val outerRequestJws: String
 )
